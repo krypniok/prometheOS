@@ -1,2 +1,5 @@
-# prometheOS
-32-Bit Hobby OS running on QEMU
+# DeuterOS
+
+## Description
+
+This is a simple x86 32 bit operating system written "from scratch" with many help from other sources.

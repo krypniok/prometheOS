@@ -1,0 +1,67 @@
+#include "../drivers/display.h"
+#include "../drivers/keyboard.h"
+#include "../drivers/ports.h"
+#include "../drivers/video.h"
+#include "../stdlibs/string.h"
+#include "../kernel/util.h"
+
+#include "editor.h"
+
+#define MAX_BUFFER_SIZE 1024
+#define SCREEN_WIDTH 80
+#define SCREEN_HEIGHT 25
+
+
+void draw_status_bar() {
+    set_color(FG_BLACK | BG_CYAN);
+    for(unsigned char c=0; c<80; c++) {
+        printf(" ");
+    }
+}
+
+void editor_exit() {
+    set_color(FG_WHITE | BG_BLACK);
+    clear_screen();
+}
+
+unsigned char *insert_character(unsigned char *text_buffer, unsigned char c) {
+    int len = strlen(text_buffer);
+    if (len < MAX_BUFFER_SIZE - 1) {
+        text_buffer[len] = c;
+        text_buffer[len + 1] = '\0'; // Nullterminator aktualisieren
+    }
+    return text_buffer;
+}
+
+void display_text_buffer(unsigned char *text_buffer) {
+    set_color(FG_WHITE | BG_LIGHT_BLUE);
+    for (int i = 0; i < MAX_BUFFER_SIZE; i++) {
+        if(text_buffer[i] != 0x0D) printf("%c", text_buffer[i]);
+    }
+}
+
+
+int editor_main() {
+    unsigned char* text_buffer = (unsigned char*)0x200000; //[MAX_BUFFER_SIZE] = {0};
+
+    while (1) {
+        clear_screen();
+        draw_status_bar();
+        display_text_buffer(text_buffer);
+        uint8_t scancode = getkey();
+        unsigned char letter = char_from_key(scancode);
+        if (scancode == SC_ESC) {
+            editor_exit();
+            break;
+        } else if (scancode == SC_F1) {
+            text_buffer[0] = '\0';
+        } else if (scancode == SC_ENTER) {
+            insert_character(text_buffer, '\n');
+        } else if (scancode == SC_BACKSPACE) {
+            text_buffer[strlen(text_buffer) - 1] = '\0';
+        } else if (scancode < 128) {
+            insert_character(text_buffer, letter);
+        }
+    }
+    return 0;
+}
