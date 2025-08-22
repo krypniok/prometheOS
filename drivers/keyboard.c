@@ -179,9 +179,18 @@ bool is_key_pressed(unsigned int scancode) {
 
 unsigned int getkey() {
     sleep(10);
-    while (!(read_keyboard_status() & 0x01)) { }
-    uint8_t scancode = read_keyboard_data();
-    return extended_scancode ? (0xE0 << 8 | scancode) : scancode;
+    while (1) {
+        uint8_t status = read_keyboard_status();
+        if (!(status & 0x01)) {
+            continue;
+        }
+        if (status & 0x20) {
+            (void)read_keyboard_data();
+            continue;
+        }
+        uint8_t scancode = read_keyboard_data();
+        return extended_scancode ? (0xE0 << 8 | scancode) : scancode;
+    }
 }
 
 unsigned int getkey_async() {
