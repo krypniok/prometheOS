@@ -8,6 +8,7 @@
 #include "../drivers/video.h"
 #include "../stdlibs/string.h"
 #include "../cpu/jmpbuf.h"
+#include "../cpu/cpuinfo.h"
 
 #include "kernel.h"
 #include "util.h"
@@ -241,6 +242,7 @@ void kernel_console_execute_command(char *input) {
     if (strcmp(input, "") == 0) { goto none; }
 
     CALL_FUNCTION(msgbox)
+    CALL_FUNCTION(help)
     CALL_FUNCTION_ALIAS(pl, printlist)
     CALL_FUNCTION_ALIAS(pv, print_select_list_vertical)
     CALL_FUNCTION(memtest)
@@ -274,6 +276,7 @@ void kernel_console_execute_command(char *input) {
     CALL_FUNCTION(hidecursor)
     CALL_FUNCTION(showcursor)
     CALL_FUNCTION(print_registers)
+    CALL_FUNCTION(cpuinfo)
     CALL_FUNCTION(keycodes)
     CALL_FUNCTION(exit)
     CALL_FUNCTION(loaddisk) 
