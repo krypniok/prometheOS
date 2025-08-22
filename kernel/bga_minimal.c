@@ -314,11 +314,6 @@ void rotate3D(Vertex *v, float ax, float ay, float az) {
     v->x = (float)x3;
     v->y = (float)y3;
     v->z = (float)z2;
-
-    // debug
-    char buf[128];
-    sprintf(buf,"rot3D out: x=%f y=%f z=%f\n", v->x,v->y,v->z);
-    debug_puts(buf);
 }
 
 
@@ -515,10 +510,6 @@ int bgademo(void) {
            rotate3D(&v0,ax,ay,az);
            rotate3D(&v1,ax,ay,az);
            rotate3D(&v2,ax,ay,az);
-		
-		   char str[80];
-		   sprintf(str, "v0: x=%f y=%f z=%f\n", v0.x, v0.y, v0.z);
-		   debug_puts(str);
 
 
             // *** in die tiefe verschieben ***
@@ -565,9 +556,12 @@ int bgademo(void) {
             }
 
             // *** winkel hochzählen ***
-            ax+=0.02f;
-            ay+=0.03f;
-            az+=0.015f;
+            ax += 0.02f;
+            ay += 0.03f;
+            az += 0.015f;
+            if (ax > 2*PI) ax -= 2*PI;
+            if (ay > 2*PI) ay -= 2*PI;
+            if (az > 2*PI) az -= 2*PI;
 
             // flip to new page
             bga_set_display_start(0, next_page*height);
