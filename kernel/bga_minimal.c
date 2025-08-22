@@ -4,6 +4,7 @@
 #include "../kernel/math.h"
 #include "../drivers/ports.h"
 #include "../drivers/keyboard.h"
+#include "../drivers/mouse.h"
 #include "../drivers/debug.h"
 #include "../drivers/display.h"
 #include "../drivers/video.h"
@@ -366,6 +367,11 @@ int bgademo2(void) {
 
             // render text buffer
             render_textbuf((uint32_t*)drawbuf,width,0x00FFFFFF,0x00000000);
+            int mx, my;
+            mouse_get_position(&mx, &my);
+            if(mx>width-8) mx=width-8;
+            if(my>height-16) my=height-16;
+            draw_text((uint32_t*)drawbuf, width, mx, my, "X", 0x00FFFFFF, 0x00000000, 1);
 
             // 3d triangle vertices
             Vertex v0={-50,-50, 100, 0xFF0000};
@@ -497,6 +503,11 @@ int bgademo(void) {
 
             // render text buffer
             render_textbuf((uint32_t*)drawbuf,width,0x00FFFFFF,0x00000000);
+            int mx, my;
+            mouse_get_position(&mx, &my);
+            if(mx>width-8) mx=width-8;
+            if(my>height-16) my=height-16;
+            draw_text((uint32_t*)drawbuf, width, mx, my, "X", 0x00FFFFFF, 0x00000000, 1);
 
             // *** kopien erzeugen und rotieren ***
             Vertex v0=base0, v1=base1, v2=base2;
