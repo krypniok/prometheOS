@@ -15,6 +15,12 @@
 static bool key_status[KEY_STATUS_MAX];
 static bool extended_scancode = false;
 
+// Ring buffer for scancodes captured by the interrupt handler
+#define KEY_BUFFER_SIZE 128
+static unsigned int key_buffer[KEY_BUFFER_SIZE];
+static volatile unsigned int key_buffer_head = 0;
+static volatile unsigned int key_buffer_tail = 0;
+
 // Define an array of key data
 struct KeyData keyData[] = {
     {"ERROR", 0, 0, 0, SC_ERROR},
@@ -140,25 +146,28 @@ static void keyboard_callback(registers_t *regs) {
         return;
     }
 
-    // Handle key release event
+    uint16_t final_code = extended_scancode ? (0xE0 << 8 | scancode) : scancode;
+
     if (scancode >= 0x80) {
-        scancode -= 0x80;
-        key_status[scancode] = false;
+        uint8_t base = scancode - 0x80;
+        if (base < KEY_STATUS_MAX) {
+            key_status[base] = false;
+        }
+        // store release scancode
+        key_buffer[key_buffer_head] = final_code;
+        key_buffer_head = (key_buffer_head + 1) % KEY_BUFFER_SIZE;
+        extended_scancode = false;
         return;
     }
 
-    // Handle key press event
     if (scancode < KEY_STATUS_MAX) {
         key_status[scancode] = true;
-
-        // Check if the scancode is extended
-        if (extended_scancode) {
-            // Handle extended scancode here, if needed
-            extended_scancode = false; // Reset extended scancode flag
-        } else {
-            // Handle regular scancode here
-        }
     }
+
+    // store press scancode
+    key_buffer[key_buffer_head] = final_code;
+    key_buffer_head = (key_buffer_head + 1) % KEY_BUFFER_SIZE;
+    extended_scancode = false;
 
     uint8_t key = scancode;
     uint8_t chr = char_from_key(key);
@@ -177,30 +186,24 @@ bool is_key_pressed(unsigned int scancode) {
     return false;
 }
 
+static unsigned int pop_key() {
+    unsigned int scancode = key_buffer[key_buffer_tail];
+    key_buffer_tail = (key_buffer_tail + 1) % KEY_BUFFER_SIZE;
+    return scancode;
+}
+
 unsigned int getkey() {
-    sleep(10);
-    while (1) {
-        uint8_t status = read_keyboard_status();
-        if (!(status & 0x01)) {
-            continue;
-        }
-        if (status & 0x20) {
-            (void)read_keyboard_data();
-            continue;
-        }
-        uint8_t scancode = read_keyboard_data();
-        return extended_scancode ? (0xE0 << 8 | scancode) : scancode;
+    while (key_buffer_head == key_buffer_tail) {
+        sleep(10);
     }
+    return pop_key();
 }
 
 unsigned int getkey_async() {
-    sleep(10);
-    uint8_t status = read_keyboard_status();
-    if (!(status & 0x01) || (status & 0x20)) {
+    if (key_buffer_head == key_buffer_tail) {
         return 0;
     }
-    uint8_t scancode = read_keyboard_data();
-    return extended_scancode ? (0xE0 << 8 | scancode) : scancode;
+    return pop_key();
 }
 
 // Warten auf einen Tastendruck und Rückgabe des ASCII-Werts
