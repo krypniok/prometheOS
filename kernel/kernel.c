@@ -3,6 +3,7 @@
 #include "../cpu/timer.h"
 #include "../drivers/display.h"
 #include "../drivers/keyboard.h"
+#include "../drivers/mouse.h"
 #include "../drivers/ports.h"
 #include "../drivers/video.h"
 #include "../stdlibs/string.h"
@@ -197,8 +198,8 @@ void kernel_main() {
         print_string("Initializing timer millisecond.\n");
         init_timer(1000);
 
-        //print_string("Initializing PS/2 mouse interface.\n");;
-        //mouse_install();
+        print_string("Initializing PS/2 mouse interface.\n");
+        mouse_install();
 
         print_string("Initializing random number generator.\n");;
         init_random();

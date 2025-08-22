@@ -26,7 +26,7 @@ COMMON_OBJS = boot/kernel_entry.o \
               kernel/conio.o kernel/kernel_command.o kernel/math.o kernel/fpu.o \
               kernel/mem.o kernel/time.o kernel/util.o kernel/perf.o \
               drivers/debug.o drivers/display.o drivers/hdd.o drivers/hidden_cmd.o \
-              drivers/keyboard.o drivers/ports.o drivers/video.o drivers/dma.o \
+              drivers/keyboard.o drivers/mouse.o drivers/ports.o drivers/video.o drivers/dma.o \
               cpu/idt.o cpu/isr.o cpu/timer.o \
               stdlibs/file.o stdlibs/memory.o stdlibs/stdio.o stdlibs/string.o \
               stdlibs/textui.o stdlibs/tinysql.o \
