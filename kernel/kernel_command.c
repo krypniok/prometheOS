@@ -6,9 +6,69 @@
 #include "../drivers/keyboard.h"
 #include "../drivers/display.h"
 #include "../cpu/jmpbuf.h"
+#include "../cpu/cpuinfo.h"
 
 extern bool g_bKernelShouldStop;
 extern jmp_buf g_jmpKernelMain;
+
+typedef struct {
+    const char *name;
+    const char *desc;
+} help_entry;
+
+static const help_entry g_help_entries[] = {
+    {"help", "List kernel commands"},
+    {"cpuinfo", "Show CPU information"},
+    {"msgbox", "Show message box"},
+    {"pl", "Print list"},
+    {"pv", "Print vertical list"},
+    {"memtest", "Run memory test"},
+    {"cls/clear/clr/rst/reset", "Clear screen"},
+    {"killtimer", "Stop PIT timer"},
+    {"bell", "Play bell"},
+    {"snaketext", "Snake text demo"},
+    {"ramdisk_test", "Test RAM disk"},
+    {"tinysql", "Start TinySQL"},
+    {"tinysql2", "Start TinySQL2"},
+    {"restart", "Restart kernel"},
+    {"main_c", "Run C main"},
+    {"em", "Text editor"},
+    {"demo", "BGA demo"},
+    {"sb16", "SB16 demo"},
+    {"dtmf", "Generate DTMF tones"},
+    {"setpal", "Change palette"},
+    {"snake_main", "Snake game"},
+    {"random", "Random numbers"},
+    {"uptime", "Show uptime"},
+    {"hidecursor", "Hide cursor"},
+    {"showcursor", "Show cursor"},
+    {"print_registers", "Dump registers"},
+    {"keycodes", "Keyboard scancodes"},
+    {"exit", "Leave kernel"},
+    {"loaddisk", "Load disk"},
+    {"printascii", "ASCII table"},
+    {"cat <addr>", "Print memory"},
+    {"hexviewer <addr>", "Hex viewer"},
+    {"run <addr>", "Jump to address"},
+    {"hexdump <addr> <len>", "Hex dump"},
+    {"memset <addr> <len>", "Fill memory"},
+    {"memcpy <src> <dst> <len>", "Copy memory"},
+    {"searchb <addr> <len> <b>", "Search byte"},
+    {"beep <freq> <ms>", "PC speaker"},
+    {"printf \"fmt\"", "Formatted print"},
+    {"searchs <addr> <len> <str>", "Search string"}
+};
+
+void help(void) {
+    int count = sizeof(g_help_entries) / sizeof(g_help_entries[0]);
+    for (int i = 0; i < count; i += 2) {
+        printf("%-20s - %-28s", g_help_entries[i].name, g_help_entries[i].desc);
+        if (i + 1 < count) {
+            printf("%-20s - %s", g_help_entries[i + 1].name, g_help_entries[i + 1].desc);
+        }
+        printf("\n");
+    }
+}
 
 void searchb(uint32_t address, uint32_t size, uint32_t byte) {
         printf("Searching %d\n", byte);

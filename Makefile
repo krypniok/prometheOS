@@ -28,6 +28,7 @@ COMMON_OBJS = boot/kernel_entry.o \
               drivers/debug.o drivers/display.o drivers/hdd.o drivers/hidden_cmd.o \
               drivers/keyboard.o drivers/mouse.o drivers/ports.o drivers/video.o drivers/dma.o \
               cpu/idt.o cpu/isr.o cpu/timer.o \
+              cpu/cpuinfo.o \
               stdlibs/file.o stdlibs/memory.o stdlibs/stdio.o stdlibs/string.o \
               stdlibs/textui.o stdlibs/tinysql.o \
               programs/editor.o programs/hexviewer.o \
