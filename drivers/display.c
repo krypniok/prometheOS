@@ -301,9 +301,14 @@ static int vsprintf_internal(char *buffer, const char *format, va_list args)
         if (*format != '%') { buffer[n++] = *format++; continue; }
         ++format; /* skip % */
 
-        /* parse flags + width: %0NNd */
-        int zero = 0, width = 0;
-        if (*format == '0') { zero = 1; ++format; }
+        /* parse flags + width: %-0NNd */
+        int zero = 0, left = 0, width = 0;
+        while (*format == '-' || *format == '0') {
+            if (*format == '-') left = 1;
+            if (*format == '0') zero = 1;
+            ++format;
+        }
+        if (left) zero = 0; /* '-' overrides '0' */
         while (*format >= '0' && *format <= '9') {
             width = width * 10 + (*format - '0');
             ++format;
@@ -361,7 +366,14 @@ case 'f': {
 
         case 'c': {
             int c = va_arg(args, int);
+            int pad = (width > 1) ? (width - 1) : 0;
+            if (!left)
+                for (int i = 0; i < pad; ++i)
+                    buffer[n++] = zero ? '0' : ' ';
             buffer[n++] = (char)c;
+            if (left)
+                for (int i = 0; i < pad; ++i)
+                    buffer[n++] = ' ';
             break;
         }
 
@@ -369,8 +381,14 @@ case 'f': {
             const char *s = va_arg(args, const char*);
             if (!s) s = "(null)";
             int len = 0; for (const char *t = s; *t; ++t) ++len;
-            int pad = width - len; while (pad-- > 0) buffer[n++] = zero ? '0' : ' ';
+            int pad = (width > len) ? (width - len) : 0;
+            if (!left)
+                for (int i = 0; i < pad; ++i)
+                    buffer[n++] = zero ? '0' : ' ';
             while (*s) buffer[n++] = *s++;
+            if (left)
+                for (int i = 0; i < pad; ++i)
+                    buffer[n++] = ' ';
             break;
         }
 
@@ -382,10 +400,16 @@ case 'f': {
             do { tmp[i++] = (char)('0' + (u % 10)); u /= 10; } while (u);
 
             int sign = (v < 0);
-            int pad = width - i - sign;
+            int len = i + sign;
+            int pad = (width > len) ? (width - len) : 0;
+            if (!left && !zero)
+                for (int j = 0; j < pad; ++j) buffer[n++] = ' ';
             if (sign) buffer[n++] = '-';
-            while (pad-- > 0) buffer[n++] = zero ? '0' : ' ';
+            if (!left && zero)
+                for (int j = 0; j < pad; ++j) buffer[n++] = '0';
             while (i--) buffer[n++] = tmp[i];
+            if (left)
+                for (int j = 0; j < pad; ++j) buffer[n++] = ' ';
             break;
         }
 
@@ -398,9 +422,14 @@ case 'f': {
                 v >>= 4;
             } while (v || i == 0); /* handle 0 */
 
-            int pad = width - i;
-            while (pad-- > 0) buffer[n++] = zero ? '0' : ' ';
+            int len = i;
+            int pad = (width > len) ? (width - len) : 0;
+            if (!left)
+                for (int j = 0; j < pad; ++j)
+                    buffer[n++] = zero ? '0' : ' ';
             while (i--) buffer[n++] = tmp[i];
+            if (left)
+                for (int j = 0; j < pad; ++j) buffer[n++] = ' ';
             break;
         }
 
@@ -414,13 +443,15 @@ case 'f': {
                 val >>= 4;
             } while (val || i == 0);
 
-            /* optional width applies to whole 0x.... */
-            int total = 2 + i;
-            int pad = (width > total) ? (width - total) : 0;
-
+            int len = 2 + i;
+            int pad = (width > len) ? (width - len) : 0;
+            if (!left)
+                for (int j = 0; j < pad; ++j)
+                    buffer[n++] = zero ? '0' : ' ';
             buffer[n++] = '0'; buffer[n++] = 'x';
-            while (pad-- > 0) buffer[n++] = zero ? '0' : ' ';
             while (i--) buffer[n++] = tmp[i];
+            if (left)
+                for (int j = 0; j < pad; ++j) buffer[n++] = ' ';
             break;
         }
 
