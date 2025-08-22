@@ -574,27 +574,29 @@ int bgademo(void) {
             current_page = next_page;
 
             unsigned int key = getkey_async();
-            unsigned int chr = char_from_key(key);
-            if(key==SC_ESC||key==(SC_ESC|0x80)) break;
+            if (key != 0) {
+                unsigned int chr = char_from_key(key);
+                if(key==SC_ESC||key==(SC_ESC|0x80)) break;
 
-            if (key == SC_BACKSPACE) {
-                if (backspace(kernel_console_key_buffer)) {
-                    print_backspace();
+                if (key == SC_BACKSPACE) {
+                    if (backspace(kernel_console_key_buffer)) {
+                        print_backspace();
+                    }
+                } else if (key == SC_ENTER) {
+                    clear_cursor();
+                    print_nl();
+                    kernel_console_execute_command(kernel_console_key_buffer);
+                    kernel_console_key_buffer[0] = '\0';
                 }
-            } else if (key == SC_ENTER) {
-                clear_cursor();
-                print_nl();
-                kernel_console_execute_command(kernel_console_key_buffer);
-                kernel_console_key_buffer[0] = '\0';
-            } 
-            else if (key == SC_F1 && is_key_pressed(SC_LEFT_CTRL)) {
-                editor_main();
-                printf("%c ", 0x10);
-            }
-            else {
-                append(kernel_console_key_buffer, chr);
-                char str[2] = {chr, '\0'};
-                print_string(str);
+                else if (key == SC_F1 && is_key_pressed(SC_LEFT_CTRL)) {
+                    editor_main();
+                    printf("%c ", 0x10);
+                }
+                else {
+                    append(kernel_console_key_buffer, chr);
+                    char str[2] = {chr, '\0'};
+                    print_string(str);
+                }
             }
         }
     }
