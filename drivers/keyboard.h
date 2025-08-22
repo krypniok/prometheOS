@@ -141,5 +141,6 @@ extern struct KeyData keyData[];
 void init_keyboard();
 bool is_key_pressed(unsigned int scancode);
 unsigned int getkey();
+unsigned int getkey_async();
 
 #endif
