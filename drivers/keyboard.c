@@ -186,6 +186,10 @@ unsigned int getkey() {
 
 unsigned int getkey_async() {
     sleep(10);
+    uint8_t status = read_keyboard_status();
+    if (!(status & 0x01) || (status & 0x20)) {
+        return 0;
+    }
     uint8_t scancode = read_keyboard_data();
     return extended_scancode ? (0xE0 << 8 | scancode) : scancode;
 }
