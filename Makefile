@@ -21,29 +21,35 @@ $(shell echo $(NEW_REVISION) > version.txt)
 # Add -DENABLE_DEBUG when building with DEBUG=1
 CFLAGS := -DREVISION_NUMBER=$(NEW_REVISION) -DREVISION_DATE='"$(CURRENT_DATE)"' $(if $(DEBUG),-DENABLE_DEBUG,)
 
+# --- Interpreter (LittleC) ---
+LITTLEC_OBJS = programs/dobby/parser.o \
+                programs/dobby/littlec.o \
+                programs/dobby/lclib.o
+
 # --- Objektlisten ---
 COMMON_OBJS = boot/kernel_entry.o \
               kernel/bga_minimal.o \
               cpu/interrupt.o cpu/setjmp.o cpu/longjmp.o \
               kernel/conio.o kernel/kernel_command.o kernel/math.o kernel/fpu.o kernel/ui.o \
-              kernel/mem.o kernel/time.o kernel/util.o kernel/perf.o \
+              kernel/mem.o kernel/time.o kernel/util.o kernel/perf.o kernel/rtc.o \
               drivers/debug.o drivers/display.o drivers/hdd.o drivers/hidden_cmd.o \
               drivers/keyboard.o drivers/mouse.o drivers/ports.o drivers/video.o drivers/dma.o drivers/pci.o \
               cpu/idt.o cpu/isr.o cpu/timer.o \
               cpu/cpuinfo.o \
               stdlibs/file.o stdlibs/memory.o stdlibs/stdio.o stdlibs/string.o \
-              stdlibs/textui.o stdlibs/homebrewdb.o \
+              stdlibs/homebrewdb.o \
               stdlibs/bmp.o stdlibs/font_psf.o \
               stdlibs/tsqlfs.o \
-              programs/editor.o \
+              programs/editor.o kernel/logo.o \
               programs/snake.o programs/snaketext.o \
               programs/sb16demo.o \
-              programs/dobby/lclib.o programs/dobby/littlec.o programs/dobby/parser.o
+              kernel/thread.o \
+              $(LITTLEC_OBJS)
 
 COMMON_OBJS_STUB = boot/kernel_entry.o \
               cpu/interrupt.o cpu/setjmp.o cpu/longjmp.o \
               kernel/conio.o kernel/math.o kernel/perf.o \
-              kernel/mem.o kernel/time.o kernel/util.o \
+              kernel/mem.o kernel/time.o kernel/util.o kernel/rtc.o \
               drivers/debug.o drivers/display.o drivers/hdd.o drivers/hidden_cmd.o \
               drivers/keyboard.o drivers/ports.o drivers/video.o drivers/pci.o \
               cpu/idt.o cpu/isr.o cpu/timer.o \
@@ -94,7 +100,7 @@ else
 endif
 
 # --- Lauf-Flags ---
-RUNFLAGS := -m 1024 -rtc base=2023-08-03T12:34:56 -vga std $(CPU32)
+RUNFLAGS := -m 1024 -rtc base=localtime,clock=host,driftfix=slew -vga std $(CPU32)
 DEBUGCON := -chardev stdio,id=dbg -device isa-debugcon,iobase=0xe9,chardev=dbg -device isa-debug-exit,iobase=0xf4,iosize=0x04 \
 
 # --- Run: 32MB HDD-Image booten, test.txt injizieren/extrahieren ---
@@ -105,8 +111,8 @@ run: os-image.bin
 	dd if=database.hbdb of=disk_image.img bs=512 seek=16514 conv=notrunc
 	@if [ -z "$(QEMU)" ]; then echo "QEMU fehlt (install qemu-system-x86)"; exit 127; fi
 	$(QEMU) $(RUNFLAGS) $(SOUND) $(DEBUGCON) -drive file=disk_image.img,format=raw,if=ide -boot c
-	# wenn qemu beendet ist: db zurückholen
-	# dd if=disk_image.img of=database.hbdb bs=512 skip=16514 count=65536 conv=notrunc
+	# wenn qemu beendet ist: db zurückholen (Host-Datei aktualisieren)
+	dd if=disk_image.img of=database.hbdb bs=512 skip=16514 count=65536 conv=notrunc
 
 # Optional: DB aus Image holen (schreibt database.hbdb!)
 db_pull: disk_image.img

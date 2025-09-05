@@ -4,6 +4,7 @@
 
 #include <stddef.h>
 
+#include "../../kernel/conio.h"
 #define getchar getkey
 
 extern char *prog; /* points to current location in program */
@@ -97,6 +98,21 @@ int call_puts(void)
   get_token();
   if(*token!=';') sntx_err(SEMI_EXPECTED);
   putback();
+  return 0;
+}
+
+/* Call beep(freq, ms) */
+int call_beep(void)
+{
+  // Parse: beep( expr, expr );
+  int f=440, ms=100;
+  get_token(); if(*token!='(') sntx_err(PAREN_EXPECTED);
+  eval_exp(&f);
+  get_token(); if(*token!=',') sntx_err(PARAM_ERR);
+  eval_exp(&ms);
+  get_token(); if(*token!=')') sntx_err(PAREN_EXPECTED);
+  get_token(); if(*token!=';') sntx_err(SEMI_EXPECTED); putback();
+  beep(f, ms);
   return 0;
 }
 

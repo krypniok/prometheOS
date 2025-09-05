@@ -281,3 +281,12 @@ char *strncat(char *dest, const char *src, size_t n) {
 
     return original_dest;
 }
+
+unsigned long long atoull(const char *s) {
+    unsigned long long v = 0;
+    while (*s >= '0' && *s <= '9') {
+        v = v * 10 + (*s - '0');
+        s++;
+    }
+    return v;
+}

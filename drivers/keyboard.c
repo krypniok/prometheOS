@@ -14,6 +14,25 @@
 
 static bool key_status[KEY_STATUS_MAX];
 static bool extended_scancode = false;
+// Track modifier states explicitly to distinguish left/right variants
+static bool mod_lshift=false, mod_rshift=false;
+static bool mod_lctrl=false,  mod_rctrl=false;
+static bool mod_lalt=false,   mod_ralt=false;
+static bool capslock_on=false;
+
+// Minimal DE AltGr layer (CP1252-ish codes where applicable)
+// Index by base scancode (non-extended)
+static const unsigned char de_altgr[128] = {
+    [SC_KEY_Q] = '@',      // AltGr+Q => @
+    [SC_KEY_E] = 0x80,     // AltGr+E => € (CP1252 0x80)
+    [SC_KEY_M] = 0xB5,     // AltGr+M => µ
+    [SC_KEY_7] = '{',      // AltGr+7 => {
+    [SC_KEY_8] = '[',      // AltGr+8 => [
+    [SC_KEY_9] = ']',      // AltGr+9 => ]
+    [SC_KEY_0] = '}',      // AltGr+0 => }
+    [SC_MINUS] = '\\',    // AltGr+ß => \
+    // For '|' on DE key <>, map via keyData ascii_alt if available (scancode 0x56 not explicit here)
+};
 
 // Ring buffer for scancodes captured by the interrupt handler
 #define KEY_BUFFER_SIZE 128
@@ -153,6 +172,17 @@ static void keyboard_callback(registers_t *regs) {
         if (base < KEY_STATUS_MAX) {
             key_status[base] = false;
         }
+        // Update modifier state on release
+        if (extended_scancode) {
+            if (base == 0x38) mod_ralt = false;      // RAlt (E0 38)
+            if (base == 0x1D) mod_rctrl = false;     // RCtrl (E0 1D)
+        } else {
+            if (base == 0x2A || base == 0x36) { // LShift(2A) or RShift(36)
+                if (base == 0x2A) mod_lshift = false; else mod_rshift = false;
+            }
+            if (base == 0x1D) mod_lctrl = false;     // LCtrl
+            if (base == 0x38) mod_lalt  = false;     // LAlt
+        }
         // store release scancode
         key_buffer[key_buffer_head] = final_code;
         key_buffer_head = (key_buffer_head + 1) % KEY_BUFFER_SIZE;
@@ -162,6 +192,19 @@ static void keyboard_callback(registers_t *regs) {
 
     if (scancode < KEY_STATUS_MAX) {
         key_status[scancode] = true;
+    }
+
+    // Update modifier state on press
+    if (extended_scancode) {
+        if (scancode == 0x38) mod_ralt = true;      // RAlt
+        if (scancode == 0x1D) mod_rctrl = true;     // RCtrl
+    } else {
+        if (scancode == 0x2A || scancode == 0x36) { // LShift or RShift
+            if (scancode == 0x2A) mod_lshift = true; else mod_rshift = true;
+        }
+        if (scancode == 0x1D) mod_lctrl = true;     // LCtrl
+        if (scancode == 0x38) mod_lalt  = true;     // LAlt
+        if (scancode == SC_CAPS_LOCK) capslock_on = !capslock_on; // toggle
     }
 
     // store press scancode
@@ -180,10 +223,37 @@ void init_keyboard() {
 }
 
 bool is_key_pressed(unsigned int scancode) {
-    if (scancode < KEY_STATUS_MAX) {
-        return key_status[scancode];
-    }
+    // Handle extended right-side modifiers
+    if (scancode == SC_RIGHT_CTRL) return mod_rctrl;
+    if (scancode == SC_RIGHT_ALT)  return mod_ralt;
+    if (scancode == 0x36 /*RShift base*/ || scancode == SC_RIGHT_SHIFT) return mod_rshift;
+    if (scancode < KEY_STATUS_MAX) return key_status[scancode];
     return false;
+}
+
+const char* scancode_name(unsigned int code){
+    static char buf[16];
+    if ((code & 0xFF00) == 0xE000){
+        unsigned int base = code & 0xFF;
+        switch (base){
+            case 0x1D: return "RCtrl";  // E0 1D
+            case 0x38: return "RAlt";   // E0 38 (AltGr)
+            case 0x48: return "UP";
+            case 0x50: return "DOWN";
+            case 0x4B: return "LEFT";
+            case 0x4D: return "RIGHT";
+            default:
+                // Generic E0-xx
+                buf[0]='E'; buf[1]='0'; buf[2]='-';
+                const char hex[]="0123456789ABCDEF";
+                buf[3]=hex[(base>>4)&0xF]; buf[4]=hex[base&0xF]; buf[5]='\0';
+                return buf;
+        }
+    } else {
+        unsigned int b = code & 0xFF;
+        if (b < sizeof(keyData)/sizeof(keyData[0])) return (const char*)keyData[b].name;
+    }
+    return "?";
 }
 
 static unsigned int pop_key() {
@@ -212,16 +282,34 @@ unsigned char char_from_key(unsigned int scancode) {
         if (scancode & 0x80) {
             // Taste wurde losgelassen, ignorieren und weiter warten
         } else {
-            char letter = 0xA8;  // Standard: Fragezeichen
+            // Do not emit characters for pure modifier keys
+            if (scancode == SC_LEFT_SHIFT || scancode == 0x36 /*RShift base*/ ||
+                scancode == SC_LEFT_CTRL  || scancode == 0x1D /*LCtrl base*/  ||
+                scancode == SC_LEFT_ALT   || scancode == 0x38 /*LAlt base*/ ) {
+                return 0;
+            }
+            char letter = 0;  // Default: no visible char
 
             // Scancode als Index verwenden, um den passenden Eintrag in keyData zu finden
             if (scancode < sizeof(keyData) / sizeof(keyData[0])) {
-                if (is_key_pressed(SC_LEFT_ALT)) {
-                    letter = keyData[scancode].ascii_alt;
-                } else if (is_key_pressed(SC_LEFT_SHIFT) || is_key_pressed(SC_RIGHT_SHIFT)) {
-                    letter = keyData[scancode].ascii_upper;
+                bool altgr = mod_ralt || (mod_lalt && mod_rctrl); // DE AltGr detection
+                bool any_shift = mod_lshift || mod_rshift;
+
+                char base     = keyData[scancode].ascii;
+                char shifted  = keyData[scancode].ascii_upper;
+                char alt_char = keyData[scancode].ascii_alt;
+
+                // Letters honor CapsLock XOR Shift
+                bool is_letter = (base>='a' && base<='z') || (base>='A' && base<='Z');
+                if (altgr) {
+                    if (scancode < 128 && de_altgr[scancode]) letter = de_altgr[scancode];
+                    else if (alt_char) letter = alt_char;
+                } else if (is_letter) {
+                    bool upper = capslock_on ^ any_shift;
+                    if (upper) letter = (base>='a'&&base<='z') ? (char)(base - 32) : (shifted?shifted:base);
+                    else       letter = (base>='A'&&base<='Z') ? (char)(base + 32) : base;
                 } else {
-                    letter = keyData[scancode].ascii;
+                    letter = any_shift ? (shifted?shifted:base) : base;
                 }
             }
             return letter;

@@ -9,6 +9,7 @@
 #include "../cpu/jmpbuf.h"
 #include "../cpu/cpuinfo.h"
 #include "../kernel/perf.h"
+#include "rtc.h"
 #include "../stdlibs/memory.h"
 #include "../stdlibs/string.h"
 #include "../stdlibs/tsqlfs.h"
@@ -16,6 +17,8 @@
 #include "../stdlibs/font_psf.h"
 #include "../programs/editor.h"
 #include "../kernel/conio.h"
+#include "thread.h"
+#include "rtc.h"
 
 int dobby(const char* filename);
 
@@ -56,6 +59,13 @@ static const help_entry g_help_entries[] = {
     {"em", "Text editor"},
     {"demo", "BGA demo"},
     {"sb16", "SB16 demo"},
+    {"thread_test", "Spawn two demo threads (coop/preempt)"},
+    {"tsrtime", "Start clock thread top-right"},
+    {"thread_kill <id>", "Signal a thread to stop"},
+    {"heartpulse", "Start pulsing hearts (ASCII code)"},
+    {"sched_info", "Show scheduler timeslice and state"},
+    {"sched_timeslice <ms>", "Set scheduler timeslice (1..1000 ms)"},
+    {"sched_mode <preempt|coop>", "Switch scheduler mode"},
     {"perftest", "Test rdtsc/micros accuracy"},
     {"font <name.psf>", "Load PSF font (256 glyphs)"},
     {"dtmf", "Generate DTMF tones"},
@@ -249,6 +259,9 @@ void perftest() {
 
 void beepus(int freq, int us) { if (us > 0) beep_us(freq, us); }
 
+// Print current wall clock time (RTC + micros)
+void now(void){ char buf[32]; time_now_iso(buf, sizeof(buf)); printf("%s\n", buf); }
+
 
 void killtimer() {
     remove_sub_timer(0);
@@ -293,16 +306,36 @@ void db_cat(const char* name){
 }
 
 // Save/load full DB to disk image at 1 MiB (LBA 2048)
-void db_saveimg(void){ int r = hbdb_save_image(16514); printf(r==0?"db saved\n":"db save failed %d\n", r); }
-void db_loadimg(void){ int r = hbdb_load_image(16514); printf(r==0?"db loaded\n":"db load failed %d\n", r); }
+static void _print_save_err(int r){
+    if (r==0){ printf("db saved\n"); return; }
+    if (r==-1) { printf("db save failed: serialize OOM/alloc\n"); return; }
+    if (r==-2) { printf("db save failed: payload exceeds max (%d bytes > cap)\n", (int)hbdb_get_max_bytes()); return; }
+    if (r==-3) { printf("db save failed: temp buffer alloc\n"); return; }
+    printf("db save failed %d\n", r);
+}
+static void _print_load_err(int r){
+    if (r==0){ printf("db loaded\n"); return; }
+    if (r==-1){ printf("db load failed: alloc\n"); return; }
+    if (r==-3){ printf("db load failed: invalid image or too large\n"); return; }
+    if (r==-4){ printf("db load failed: deserialize error\n"); return; }
+    printf("db load failed %d\n", r);
+}
+void db_saveimg(void){ int r = hbdb_save_image(16514); _print_save_err(r); }
+void db_loadimg(void){ int r = hbdb_load_image(16514); _print_load_err(r); }
 
 void db_autosave_on(void){ hbdb_set_autosave(1); printf("db autosave: on\n"); }
 void db_autosave_off(void){ hbdb_set_autosave(0); printf("db autosave: off\n"); }
 
 void db_info(void){
     int rows = hbdb_fs_rows();
-    if (rows < 0) printf("FS table: missing\n");
-    else printf("FS rows: %d\n", rows);
+    if (rows < 0) { printf("FS table: missing\n"); return; }
+    unsigned int payload = hbdb_calc_bytes_payload();
+    unsigned int total   = hbdb_calc_bytes_total();
+    unsigned int cap     = hbdb_get_max_bytes();
+    unsigned int free    = (total < cap) ? (cap - total) : 0;
+    printf("FS rows: %d\n", rows);
+    printf("DB size: payload=%d bytes, total(padded)=%d bytes\n", (int)payload, (int)total);
+    printf("Capacity: %d bytes (free ~ %d)\n", (int)cap, (int)free);
 }
 
 // Wrapper to avoid pointer/int warning in hexdump mapping
@@ -364,28 +397,158 @@ void dtmf_stop(void){ dtmf_stop_bg(); }
 
 int keycodes() {
     while (1) {
-        uint8_t scancode = getkey();
-        if (scancode < 128) {
-            printf("%s\n", keyData[scancode].name);
-            if (scancode == SC_ESC) {
-                return 0;
-            }
-        }
+        unsigned int sc = getkey();
+        // ignore releases (low 8-bit >= 0x80)
+        if ((sc & 0xFF) >= 0x80) continue;
+        extern const char* scancode_name(unsigned int);
+        const char* name = scancode_name(sc);
+        if (name && name[0] != '?') printf("%s\n", name);
+        if ((sc & 0xFF) == SC_ESC) return 0;
     }
-    sleep(33);
 }
 
-// palflash <idx>: blink a VGA text palette entry between two colors
-void palflash(uint32_t idx){
-    if (idx > 255) idx = 15; // default white
-    for (int i=0;i<6;i++) {
-        vga_set_palette_entry((int)idx, 63,63,63); // white
-        sleep(120);
-        vga_set_palette_entry((int)idx, 0,42,63);  // cyan-ish
-        sleep(120);
+// --- TSR clock thread -------------------------------------------------------
+static void _tsr_clock_thread(void){
+    uint64_t last = (uint64_t)-1;
+    while (!thread_should_stop()){
+        uint64_t sec = time_now_seconds();
+        if (sec != last){
+            last = sec;
+            char buf[32]; time_now_iso(buf, sizeof(buf));
+            int len = (int)strlen(buf);
+            int x = 80 - len; if (x < 0) x = 0;
+            int cur = get_cursor(); unsigned char old = get_color();
+            console_begin_batch();
+            set_color(FG_BRIGHT_WHITE | BG_CYAN);
+            set_cursor_xy(x, 0);
+            printf("%s", buf);
+            console_end_batch();
+            set_color(old); set_cursor(cur);
+        }
+        // poll at 10Hz, update exactly when the second flips
+        sleep_us(100000);
     }
-    vga_set_palette_entry((int)idx, 63,63,63);
 }
+
+void tsrtime(){ int id = thread_create(_tsr_clock_thread); printf("tsr clock id %d\n", id); if (id < 0) printf("thread create failed\n"); }
+void thread_kill_cmd(uint32_t id){ int r = thread_kill((int)id); printf(r==0?"killed %d\n":"kill failed\n", (int)id); }
+
+// Pulse all cells with a given character code by changing FG color between red shades
+static void _heart_pulse_thread(void){
+    // Fade palette index 4 (RED) between two shades linearly
+    const int idx = 4;
+    const int steps = 40; const int step_us = 25000; // ~1s per direction
+    // endpoints: dark red -> bright red
+    int r1=28,g1=0,b1=0, r2=63,g2=0,b2=0;
+    while (!thread_should_stop()){
+        for (int s=0; s<=steps && !thread_should_stop(); s++){
+            int r = r1 + (r2 - r1) * s / steps;
+            int g = g1 + (g2 - g1) * s / steps;
+            int b = b1 + (b2 - b1) * s / steps;
+            vga_set_palette_entry(idx, (uint8_t)r,(uint8_t)g,(uint8_t)b);
+            sleep_us(step_us);
+        }
+        for (int s=0; s<=steps && !thread_should_stop(); s++){
+            int r = r2 + (r1 - r2) * s / steps;
+            int g = g2 + (g1 - g2) * s / steps;
+            int b = b2 + (b1 - b2) * s / steps;
+            vga_set_palette_entry(idx, (uint8_t)r,(uint8_t)g,(uint8_t)b);
+            sleep_us(step_us);
+        }
+    }
+    // restore to bright red at end
+    vga_set_palette_entry(idx, 63,0,0);
+}
+
+void heartpulse(){
+    // print one visible heart (CP437 0x03) next to id in red
+    int id = thread_create(_heart_pulse_thread);
+    unsigned char old = get_color(); set_color(FG_RED|BG_BLACK);
+    printf("%c ", 3);
+    set_color(old);
+    printf("heartpulse id %d\n", id);
+}
+
+// --- heartspin: rotate heart glyph (0x03) in 90° steps ---------------------
+static void rotate90_8xH(const uint8_t* in, uint8_t* out, int H){
+    for (int y=0;y<H;y++) out[y]=0;
+    int rows = H; int cols = 8;
+    for (int y=0;y<rows;y++){
+        uint8_t row = in[y];
+        for (int x=0;x<cols;x++){
+            int bit = (row >> x) & 1;
+            if (bit){ int nx = cols-1-y; int ny = x; if (ny < rows){ out[ny] |= (1u<<nx); } }
+        }
+    }
+}
+
+static void _heart_spin_thread(void){
+    size_t H = vga_get_font_height(); if (H==0||H>32) H=16;
+    uint8_t all[256*32]; save_vga_font(all, H);
+    uint8_t orig[32]; for (size_t i=0;i<H;i++) orig[i]=all[3*32 + i];
+    uint8_t f0[32], f1[32], f2[32], f3[32];
+    for (size_t i=0;i<H;i++) f0[i]=orig[i];
+    rotate90_8xH(f0,f1,(int)H);
+    rotate90_8xH(f1,f2,(int)H);
+    rotate90_8xH(f2,f3,(int)H);
+    const uint8_t* frames[4]={f0,f1,f2,f3}; int idx=0;
+    while (!thread_should_stop()){
+        vga_set_glyph(3, frames[idx], H);
+        idx = (idx+1) & 3;
+        sleep_us(150000);
+    }
+    vga_set_glyph(3, orig, H);
+}
+
+void heartspin(){ int id = thread_create(_heart_spin_thread); printf("heartspin id %d\n", id); }
+
+// Palfade parameter store keyed by thread id
+typedef struct { int set; int idx; int r1,g1,b1; int r2,g2,b2; } PalParam;
+static PalParam g_palfade_params[MAX_THREADS];
+static int g_pf_c1[3] = {63,63,63};
+static int g_pf_c2[3] = {0,42,63};
+
+static void _palfade_thread(void){
+    int my = thread_current_id();
+    // Wait until parameters have been set by the spawner
+    while (!g_palfade_params[my].set && !thread_should_stop()) sleep_us(1000);
+    PalParam p = g_palfade_params[my];
+    const int steps = 40; const int step_us = 25000; // ~1s per direction
+    while (!thread_should_stop()){
+        for (int s=0; s<=steps && !thread_should_stop(); s++){
+            int r = p.r1 + (p.r2 - p.r1) * s / steps;
+            int g = p.g1 + (p.g2 - p.g1) * s / steps;
+            int b = p.b1 + (p.b2 - p.b1) * s / steps;
+            vga_set_palette_entry(p.idx, (uint8_t)r,(uint8_t)g,(uint8_t)b);
+            sleep_us(step_us);
+        }
+        for (int s=0; s<=steps && !thread_should_stop(); s++){
+            int r = p.r2 + (p.r1 - p.r2) * s / steps;
+            int g = p.g2 + (p.g1 - p.g2) * s / steps;
+            int b = p.b2 + (p.b1 - p.b2) * s / steps;
+            vga_set_palette_entry(p.idx, (uint8_t)r,(uint8_t)g,(uint8_t)b);
+            sleep_us(step_us);
+        }
+    }
+}
+
+// palflash <idx>
+void palflash(uint32_t idx){
+    if (idx > 255) idx = 15;
+    int id = thread_create(_palfade_thread);
+    if (id >= 0){
+        g_palfade_params[id].idx = (int)idx;
+        g_palfade_params[id].r1 = g_pf_c1[0]; g_palfade_params[id].g1 = g_pf_c1[1]; g_palfade_params[id].b1 = g_pf_c1[2];
+        g_palfade_params[id].r2 = g_pf_c2[0]; g_palfade_params[id].g2 = g_pf_c2[1]; g_palfade_params[id].b2 = g_pf_c2[2];
+        g_palfade_params[id].set = 1;
+    }
+    printf("palfade id %d\n", id);
+}
+
+// palfade_c1 <r> <g> <b>
+void palfade_c1(uint32_t r, uint32_t g, uint32_t b){ g_pf_c1[0]=(int)r; g_pf_c1[1]=(int)g; g_pf_c1[2]=(int)b; }
+// palfade_c2 <r> <g> <b>
+void palfade_c2(uint32_t r, uint32_t g, uint32_t b){ g_pf_c2[0]=(int)r; g_pf_c2[1]=(int)g; g_pf_c2[2]=(int)b; }
 
 // glyphpulse <code>: invert a glyph every 200ms a few times
 void glyphpulse(uint32_t code){
@@ -427,88 +590,5 @@ void kernel_console_clear() {
         set_cursor(0);
 }
 
-    int message_box(int x, int y, int w, int h, unsigned char color, unsigned char* caption, unsigned char* message, unsigned char num_buttons) {
-        unsigned int old_color = get_color();
-        unsigned char len = strlen(caption);
-        unsigned char offset = (w - len) / 2;
-        set_cursor_xy(x, y);
-        printf("%c", 0xC9); // ecke links oben
-     
-        for (int col = 0; col < (w-offset-len/2)-5; col++) { printf("%c", 0xCD); } // balken oben
-        printf("%s", caption); // balken oben
-        for (int col = 0; col < (w-offset-len/2)-5; col++) { printf("%c", 0xCD); } // balken oben
-
-        printf("%c\n", 0xBB); // ecke rechts oben
-        y++;
-        for(int row=0; row<h-2; row++) {
-            set_cursor_xy(x, y);
-            printf("%c", 0xBA); // balken links
-            for (int col = 0; col < w; col++) { printf("%c", ' '); } // leerzeichen
-            printf("%c\n", 0xBA); // balken rechts
-            y++;
-        }
-        set_cursor_xy(x, y);
-        printf("%c", 0xC8); // ecke links unten
-        for (int col = 0; col < w; col++) { printf("%c", 0xCD); } // balken unten
-        printf("%c\n", 0xBC); // ecke rechts unten
-        set_color(color);
-        set_cursor_xy(x + 2, y - h + 3);
-        printf("%s", message);
-        set_color(old_color);
-        unsigned char* buttons[3] = {"Yes", "No", "Abort"};
-        int selected = 0;
-        unsigned char old_color2 = get_color();
-        hidecursor();
-        while (1) {
-            uint8_t scancode = getkey();
-            if (scancode == SC_KEYPAD_4) {
-                if(selected > 0) selected--;
-            }
-            else if (scancode == SC_KEYPAD_6) {
-                if(selected < num_buttons-1) selected++;
-            }
-            else if (scancode == SC_ESC) {
-                set_color(old_color2);
-                showcursor();
-                return -1;
-            }
-            else if (scancode == SC_ENTER) {
-                goto none;
-            }
-            //clear_screen();
-            for(int i=0; i<num_buttons; i++) {
-                if(i == selected) {
-                    set_color(FG_BRIGHT_WHITE | BG_LIGHT_BLUE);
-                    printf("%s", buttons[i]);
-                } else {
-                    set_color(FG_BRIGHT_WHITE | BG_BLACK);
-                    printf("%s", buttons[i]);
-                }
-                set_color(FG_BRIGHT_WHITE | BG_BLACK);
-                if(i < num_buttons-1) printf(" | ");
-            }
-            printf("\n");
-            set_color(old_color2);        
-        }
-    none:
-        set_color(old_color2);
-        printf("Selected: %s\n", buttons[selected]);
-        showcursor();
-        return selected;
-    }
-
-    void msgbox() {
-        unsigned char* question = " question ? ";
-        unsigned char* message = "This is 3 buttons.";
-        int result = message_box(30, 7, 40, 10, FG_WHITE | BG_LIGHT_BLUE, question, message, 3);
-        if (result == 0) {
-            printf("Yes was selected.\n");
-        } else if (result == 1) {
-            printf("No was selected.\n");
-        } else if (result == 2) {
-            printf("Abort was selected.\n");
-        } else {
-            printf("Message box was cancelled.\n");
-        }
-    }
+    // message_box and msgbox moved to kernel/ui.c
     

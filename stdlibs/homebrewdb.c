@@ -445,11 +445,25 @@ void hbdb_fs_list(void (*cb)(const char* name, size_t size)) {
 }
 
 // --- Serialization helpers (to memory buffer) ------------------------------
-typedef struct { unsigned char* data; size_t len; size_t cap; } MemOut;
-static void mo_init(MemOut* m){ m->data=NULL; m->len=0; m->cap=0; }
+typedef struct { unsigned char* data; size_t len; size_t cap; int ok; } MemOut;
+static void mo_init(MemOut* m){ m->data=NULL; m->len=0; m->cap=0; m->ok=1; }
 static void mo_write(MemOut* m, const void* src, size_t n){
-    if (m->len + n > m->cap){ size_t nc = m->cap? m->cap:256; while (nc < m->len+n) nc*=2; unsigned char* nb=(unsigned char*)realloc(m->data, nc); if(!nb) return; m->data=nb; memset(m->data + m->cap, 0, nc - m->cap); m->cap=nc; }
-    memcpy(m->data + m->len, src, n); m->len += n; }
+    if (!m->ok) return;
+    if (m->len + n > m->cap){
+        size_t nc = m->cap? m->cap:256;
+        while (nc < m->len+n) {
+            size_t next = nc * 2;
+            if (next <= nc) { next = m->len + n; }
+            nc = next;
+        }
+        unsigned char* nb=(unsigned char*)realloc(m->data, nc);
+        if(!nb){ m->ok=0; return; }
+        // zero-fill the new region
+        memset(nb + m->cap, 0, nc - m->cap);
+        m->data=nb; m->cap=nc;
+    }
+    memcpy(m->data + m->len, src, n); m->len += n;
+}
 
 int hbdb_serialize(unsigned char** out_buf, size_t* out_len) {
     if (!out_buf || !out_len) return 0;
@@ -482,6 +496,7 @@ int hbdb_serialize(unsigned char** out_buf, size_t* out_len) {
             }
         }
     }
+    if (!mo.ok){ if (mo.data) free(mo.data); return 0; }
     *out_buf = mo.data; *out_len = mo.len; return 1;
 }
 
@@ -596,3 +611,39 @@ int hbdb_fs_rows(void){
 
 void hbdb_set_max_bytes(unsigned int max_bytes){ g_hbdb_max_bytes = max_bytes; }
 unsigned int hbdb_get_max_bytes(void){ return g_hbdb_max_bytes; }
+
+// ---- Size estimation (no allocation) --------------------------------------
+unsigned int hbdb_calc_bytes_payload(void){
+    size_t total = sizeof(int); // num_tables
+    for (int i = 0; i < database.num_tables; i++) {
+        Table *table = &(database.tables[i]);
+        int name_length = strlen(table->name);
+        total += sizeof(int) + (size_t)name_length; // name_len + name
+        total += sizeof(int);                        // num_columns
+        total += sizeof(DataType) * table->num_columns; // data_types
+        total += sizeof(int);                        // num_rows
+        for (int j = 0; j < table->num_rows; j++) {
+            for (int k = 0; k < table->num_columns; k++) {
+                switch (table->data_types[k]) {
+                    case INTEGER: total += sizeof(int); break;
+                    case STRING: {
+                        int sl = table->data[j][k] ? (int)strlen((char*)table->data[j][k]) : 0;
+                        total += sizeof(int) + (size_t)sl;
+                    } break;
+                    case BLOB: {
+                        size_t bs = table->data_sizes[j];
+                        total += sizeof(size_t) + bs;
+                    } break;
+                }
+            }
+        }
+    }
+    return (unsigned int)total;
+}
+
+unsigned int hbdb_calc_bytes_total(void){
+    unsigned int payload = hbdb_calc_bytes_payload();
+    unsigned int total = payload + 8; // magic+len
+    unsigned int padded = (total + 511u) & ~511u;
+    return padded;
+}

@@ -19,8 +19,10 @@
 #include "util.h"
 #include "time.h"
 #include "ui.h"
+#include "rtc.h"
 
 #define KERNEL_PROMPT_CHAR 0x10
+#define KERNEL_PROMPT_COLOR (FG_RED | BG_BLACK)
 
 jmp_buf g_jmpKernelMain;
 
@@ -38,7 +40,7 @@ typedef struct { const char* name; CmdType type; void* fn; } Cmd;
 // Forward declarations for command functions (minimal signatures)
 extern void help(const char*);
 extern void msgbox(void); extern void cpuinfo(void);
-extern void print_select_list_horizontal(void); extern void print_select_list_vertical(void);
+extern int print_select_list_horizontal(void); extern int print_select_list_vertical(void);
 extern void memtest(void); extern void kernel_console_clear(void);
 extern void killtimer(void); extern int bell(void); extern void snaketext(void);
 extern int ramdisk_test(void); extern int ramdisk_saveimg(void); extern int ramdisk_loadimg(void); extern int tsqlfs_test(void);
@@ -60,6 +62,18 @@ extern void beep(uint32_t,uint32_t); extern void beepus(uint32_t,uint32_t); exte
 extern void beep_sequence(uint32_t,uint32_t,uint32_t);
 extern void searchs(uint32_t,uint32_t,const char*); extern void quit_qemu(void);
 extern void palflash(uint32_t); extern void glyphpulse(uint32_t);
+extern void thread_test(void);
+extern void sched_info(void);
+extern void sched_timeslice(uint32_t);
+extern void sched_mode(const char*);
+extern void now(void);
+extern void tsrtime(void);
+extern void thread_kill_cmd(uint32_t);
+extern void heartpulse(void);
+extern void heartspin(void);
+extern void palfade_c1(uint32_t,uint32_t,uint32_t);
+extern void palfade_c2(uint32_t,uint32_t,uint32_t);
+extern void printlogo(void);
 
 extern int ide_main(void);
 
@@ -99,6 +113,18 @@ static const Cmd CMDS[] = {
     {"em",          T0,        editor_main},
     {"demo",        T0,        bgademo},
     {"sb16",        T0,        sb16demo},
+    {"thread_test", T0,        thread_test},
+    {"sched_info",  T0,        sched_info},
+    {"sched_timeslice", T_U32, sched_timeslice},
+    {"sched_mode",  T_STR,     sched_mode},
+    {"now",         T0,        now},
+    {"tsrtime",     T0,        tsrtime},
+    {"thread_kill", T_U32,     thread_kill_cmd},
+    {"heartpulse",  T0,        heartpulse},
+    {"heartspin",   T0,        heartspin},
+    {"palfade_c1",  T_U32_U32_U32, palfade_c1},
+    {"palfade_c2",  T_U32_U32_U32, palfade_c2},
+    {"printlogo",  T0,        printlogo},
     {"dtmf",        T0,        dtmf},
     {"dtmf_bg",     T_STR,     dtmf_bg},
     {"dtmf_stop",   T0,        dtmf_stop},
@@ -159,7 +185,7 @@ void kernel_main() {
         asm volatile("sti");
         print_string("Initializing keyboard (IRQ 1).\n");
         init_keyboard();
-        print_string("Initializing memory managment ¿.\n");
+        print_string("Initializing memory managment.\n");
         init_memory();
         init_dynamic_mem();
 
@@ -180,6 +206,8 @@ void kernel_main() {
 
         print_string("Initializing Perfomance Counter.\n");;
 		perf_init();
+        print_string("Seeding wall clock from RTC.\n");
+        time_init_with_rtc();
 
         // Load HomebrewDB from DB_START_LBA (after kernel region) and enable autosave
         hbdb_load_image(16514);
@@ -195,7 +223,13 @@ void kernel_main() {
     // used by our libc-style allocator (memory[] in stdlibs/memory.c).
     // Any such tests should use a dedicated scratch buffer and stay clear of
     // the BSS region.
-    printf("\n%c ", KERNEL_PROMPT_CHAR);
+    {
+        unsigned char oldc = get_color();
+        set_color(KERNEL_PROMPT_COLOR);
+        printf("%c", KERNEL_PROMPT_CHAR);
+        set_color(oldc);
+        printf(" ");
+    }
 
     while(!g_bKernelShouldStop) {
         kernel_console_program();
@@ -203,9 +237,12 @@ void kernel_main() {
 
 end_of_kernel:
     print_nl();
-    printf("Wow, we should get here...\nExiting...\nStopping the CPU...\nescape espace...\n");
-    asm volatile("hlt");
-    printf("P.S. Why is this still working when the CPU is officially stopped (hlt) ?\n");
+    printf("Wow, we should get here...\nExiting...\nStopping the CPU...\n");
+    // Fully stop CPU: disable interrupts, then halt forever.
+    // With IF=1, HLT only sleeps until the next interrupt (PIT/keyboard),
+    // which is why execution seemed to continue after HLT.
+    asm volatile("cli");
+    for(;;){ asm volatile("hlt"); }
 }
 
 void kernel_console_execute_command(char *input) {

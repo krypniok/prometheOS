@@ -5,6 +5,7 @@
 #include "../drivers/hdd.h"
 #include "../stdlibs/string.h"
 #include "../kernel/util.h"
+#include "../kernel/ui.h"
 
 #include "../stdlibs/stdio_fs.h"
 
@@ -146,6 +147,7 @@ int editor_main2() {
     }
 
     while (1) {
+        console_begin_batch();
         clear_screen();
         editor_draw_status_bar();
 
@@ -173,6 +175,7 @@ int editor_main2() {
             unsigned char py = 1 + hex_cy;
             set_cursor_xy(px + (hex_hi ? 0 : 1), py);
         }
+        console_end_batch();
         unsigned int scancode = getkey();
         // Ignore key release events (low 8 bits >= 0x80)
         if ((scancode & 0xFF) >= 0x80) {
@@ -249,6 +252,19 @@ int editor_main2() {
         } else if (mode == MODE_TEXT && scancode == SC_RIGHT_ARROW) {
             if (cursor_pos < text_len) { cursor_pos++; }
             desired_col = -1;
+        } else if (mode == MODE_TEXT && scancode == SC_HOME) {
+            cursor_pos = line_start_before(cursor_pos);
+            desired_col = -1;
+        } else if (mode == MODE_TEXT && scancode == SC_END) {
+            int ls = line_start_before(cursor_pos);
+            cursor_pos = ls + line_length_at(ls);
+            desired_col = -1;
+        } else if (mode == MODE_TEXT && scancode == SC_DELETE) {
+            if (cursor_pos < text_len) {
+                if (text_buffer[cursor_pos] == '\n' && num_lines > 1) num_lines--;
+                memcpy(&text_buffer[cursor_pos], &text_buffer[cursor_pos+1], text_len - cursor_pos);
+                text_len--;
+            }
         } else if (mode == MODE_TEXT && scancode == SC_UP_ARROW) {
             int cur_line_start = line_start_before(cursor_pos);
             int prev_line_start = line_start_before(cur_line_start);
@@ -354,52 +370,7 @@ static void draw_box(int x,int y,int w,int h,unsigned char frame,unsigned char f
     set_color(old);
 }
 
-static void prompt_filename_box(char *out,int maxlen,const char *title,const char *label){
-    unsigned int old=get_color();
-    int w=46,h=7;
-    int x=(SCREEN_WIDTH - w)/2; if(x<0) x=0;
-    int y=(SCREEN_HEIGHT- h)/2; if(y<1) y=1;   // statusbar schonen
-
-    // rahmen + titel
-    draw_box(x,y,w,h, FG_BRIGHT_WHITE|BG_BLUE, FG_WHITE|BG_BLACK);
-    set_color(FG_BRIGHT_WHITE|BG_BLUE);
-    int tlen=(int)strlen(title);
-    set_cursor_xy(x + (w - tlen)/2, y); printf("%s", title);
-
-    // label + eingabe
-    set_color(FG_WHITE|BG_BLACK);
-    set_cursor_xy(x+2,y+2); printf("%s", label);
-    int base_x = x+2+(int)strlen(label);
-    int cx = base_x, cy = y+2;
-
-    out[0]='\0'; int pos=0;
-    showcursor();
-    set_cursor_xy(cx, cy);
-
-    while(1){
-        unsigned int sc=getkey(); if((sc&0xFF)>=0x80) continue;
-        if (sc==SC_ESC){ out[0]='\0'; break; }
-        if (sc==SC_ENTER){ out[pos]='\0'; break; }
-        if (sc==SC_BACKSPACE){
-            if(pos>0){
-                pos--; out[pos]='\0';
-                set_cursor_xy(base_x+pos, cy); printf("%c",' ');
-                set_cursor_xy(base_x+pos, cy);
-            }
-            continue;
-        }
-        unsigned char c=char_from_key(sc);
-        // rechtsrand der box respektieren (keine letzte spalte)
-        if (c && pos<maxlen-1 && base_x+pos < x+w-2){
-            out[pos++]=c; out[pos]='\0';
-            printf("%c", c);
-        }
-    }
-
-    hidecursor();
-    set_color(old);
-    // nix clearen – nächste frame-draw löscht die box sowieso
-}
+// prompt_filename_box replaced by ui_prompt_box() in kernel/ui.c
 
 static int file_load_into(const char *name, unsigned char *buf, int max_bytes){
     FILE *f = fopen(name, "rb");
@@ -407,7 +378,20 @@ static int file_load_into(const char *name, unsigned char *buf, int max_bytes){
     int rd = (int)fread(buf, 1, max_bytes-1, f);
     fclose(f);
     if (rd < 0) rd = 0;
-    buf[rd] = '\0';
+    // Normalize line endings to '\n': convert CRLF and CR to LF in-place
+    int w = 0;
+    for (int r = 0; r < rd; r++) {
+        unsigned char c = buf[r];
+        if (c == '\r') {
+            // if next is '\n', skip the '\r' and let '\n' fall through
+            if (r+1 < rd && buf[r+1] == '\n') { continue; }
+            // standalone CR -> convert to LF
+            c = '\n';
+        }
+        buf[w++] = c;
+    }
+    buf[w] = '\0';
+    rd = w;
     return rd;
 }
 
@@ -448,9 +432,18 @@ int editor_main() {
     static char g_filename[256] = {0};               // merkt den letzten dateinamen
     unsigned char* text_buffer = (unsigned char*)0x300000;
 
-    // initialer inhalt bleibt wie zuvor (0-gefülltes image)
-    int text_len = my_strnlen((char*)text_buffer, MAX_BUFFER_SIZE);
-    if (text_len >= MAX_BUFFER_SIZE) { text_len = MAX_BUFFER_SIZE - 1; text_buffer[text_len] = '\0'; }
+    // Detect if prefilled (db_edit) vs. standalone (em)
+    int prefilled = 0;
+    for (int i=0;i<64;i++){ if (text_buffer[i] != 0){ prefilled=1; break; } }
+    int text_len = 0;
+    if (!prefilled) {
+        // standalone: start with empty buffer
+        for (int i=0;i<MAX_BUFFER_SIZE;i++) text_buffer[i] = 0;
+        text_len = 0;
+    } else {
+        text_len = my_strnlen((char*)text_buffer, MAX_BUFFER_SIZE);
+        if (text_len >= MAX_BUFFER_SIZE) { text_len = MAX_BUFFER_SIZE - 1; text_buffer[text_len] = '\0'; }
+    }
 
     int num_lines = count_lines_n(text_buffer, text_len);
     int scroll_offset = 0;
@@ -537,27 +530,32 @@ if (mode == MODE_TEXT) {
 
         } else if (scancode == SC_F1) {                       // clear
             text_buffer[0] = '\0'; text_len = 0; num_lines = 1; scroll_offset = 0; cursor_pos = 0; desired_col = -1;
-		} else if (scancode == SC_F3) {
-    		char name[256]={0};
-    		prompt_filename_box(name, sizeof(name), " open file ", "name: ");
+        } else if (scancode == SC_F3) {
+		char name[256]={0};
+		ui_file_prompt(name, sizeof(name), " open file ", "name: ", g_filename[0]?g_filename:NULL);
 
             if (name[0]) {
                 int rd = file_load_into(name, text_buffer, MAX_BUFFER_SIZE);
                 if (rd >= 0) {
                     strncpy(g_filename, name, sizeof(g_filename)-1);
+                    g_filename[sizeof(g_filename)-1] = '\0';
                     text_len = rd;
                     num_lines = count_lines_n(text_buffer, text_len);
                     scroll_offset = 0; cursor_pos = 0; desired_col = -1;
+                    mode = MODE_TEXT; hex_page = 0; hex_cx = hex_cy = 0; hex_hi = 1;
                     beep(1320, 40);
                 } else {
                     beep(220, 120);
                 }
             }
 
-        } else if (scancode == SC_F2) {                       // SAVE
-            if (!g_filename[0]) {
-                prompt_filename_box(g_filename, sizeof(g_filename), " save file ", "name: ");
-                if (!g_filename[0]) { beep(220,120); goto after_save; }
+        } else if (scancode == SC_F2) {                       // SAVE (always ask, prefill current)
+            {
+                char tmp[256]; tmp[0]='\0';
+                if (g_filename[0]) { strncpy(tmp, g_filename, sizeof(tmp)-1); tmp[sizeof(tmp)-1]='\0'; }
+                if (!ui_file_prompt(tmp, sizeof(tmp), " save file ", "name: ", tmp)) { beep(220,120); goto after_save; }
+                strncpy(g_filename, tmp, sizeof(g_filename)-1);
+                g_filename[sizeof(g_filename)-1] = '\0';
             }
             int len = my_strnlen((char*)text_buffer, MAX_BUFFER_SIZE);
             int rc = file_save_from(g_filename, text_buffer, len);

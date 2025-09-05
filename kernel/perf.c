@@ -90,7 +90,7 @@ void perf_init(void) {
 
     // Avoid 64-bit printf on our tiny printf; print MHz as 32-bit
     uint32_t mhz = (uint32_t)(g_cpu_hz / 1000000ULL);
-    printf("[perf] CPU freq ≈ %d MHz\n", mhz);
+    printf("[perf] CPU freq ~= %d MHz\n", mhz);
 }
 
 

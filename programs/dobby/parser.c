@@ -78,6 +78,7 @@ extern struct commands {
  */
 int call_getche(void), call_putch(void);
 int call_puts(void), print(void), getnum(void);
+int call_beep(void);
 int call_putnl(void);
 
 struct intern_func_type {
@@ -89,6 +90,7 @@ struct intern_func_type {
   "puts", call_puts,
   "print", print,
   "getnum", getnum,
+  "beep",  call_beep,
   "", 0  /* null terminate the list */
 };
 
@@ -111,6 +113,10 @@ int internal_func(char *s);
 int is_var(char *s);
 char *find_func(char *name);
 void call(void);
+// external kernel function dispatcher (generic)
+static int ext_call(const char* name, int* out_value);
+// kernel functions exposed to Little C
+#include "../../kernel/conio.h"
 
 /* Entry point into parser. */
 void eval_exp(int *value)
@@ -288,6 +294,11 @@ void atom(int *value)
       call();
       *value = ret_value;
     }
+    else if (ext_call(token, value)) {
+      /* handled by external dispatcher; advance and return like regular call */
+      get_token();
+      return;
+    }
     else *value = find_var(token);  /* get var's value */
     get_token();
     return;
@@ -309,6 +320,57 @@ void atom(int *value)
   default:
     sntx_err(SYNTAX); /* syntax error */
   }
+}
+
+/* Generic external dispatcher: parse args list and invoke kernel functions. */
+typedef void (*kfn_ii_t)(int,int);
+typedef struct { const char* name; const char* sig; void* fn; } kentry_t;
+static const kentry_t KFN[] = {
+  { "beep", "ii", (void*)(kfn_ii_t)beep },
+  { 0, 0, 0 }
+};
+
+static int ext_call(const char* name, int* out_value)
+{
+  if (!name || !name[0]) return 0;
+  // Must be followed by '('
+  get_token();
+  if (*token != '(') { putback(); return 0; }
+
+  // Lookup in registry
+  const kentry_t* e = KFN; int found = 0;
+  while (e->name) { if (strcmp(e->name, name)==0){ found=1; break; } e++; }
+  if (!found) { // skip args until ')' and report unknown
+    // consume until matching ')'
+    int depth=1; do { get_token(); if (*token=='(') depth++; else if (*token==')') depth--; } while (depth>0 && tok!=FINISHED);
+    return 0;
+  }
+
+  // Parse arguments according to signature (currently supports only 'i')
+  int args_i[8]; int argc=0; int val=0;
+  // Check empty call first
+  get_token();
+  if (*token != ')') {
+    putback();
+    do {
+      eval_exp(&val);
+      if (argc < (int)(sizeof(args_i)/sizeof(args_i[0]))) args_i[argc++] = val;
+      get_token();
+    } while (*token == ',');
+    if (*token != ')') sntx_err(PAREN_EXPECTED);
+  }
+
+  // Invoke
+  if (strcmp(e->sig, "ii")==0) {
+    int a0 = (argc>0)?args_i[0]:0;
+    int a1 = (argc>1)?args_i[1]:0;
+    ((kfn_ii_t)e->fn)(a0, a1);
+    if (out_value) *out_value = 0;
+    return 1;
+  }
+
+  // Unsupported signature for now
+  return 0;
 }
 
 /* Display an error message. */

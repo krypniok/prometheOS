@@ -31,3 +31,8 @@ int hbdb_fs_rows(void); // -1 if FS table missing
 // Limits
 void hbdb_set_max_bytes(unsigned int max_bytes); // default 8 MiB
 unsigned int hbdb_get_max_bytes(void);
+
+// Calculate current serialized sizes (without writing):
+// payload bytes = size of serialized tables; total bytes = 8-byte header + payload, padded to 512
+unsigned int hbdb_calc_bytes_payload(void);
+unsigned int hbdb_calc_bytes_total(void);

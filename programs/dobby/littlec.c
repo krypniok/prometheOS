@@ -1,8 +1,18 @@
 /* A Little C interpreter. 
-	Minor fixes incorporated as of 1/4/96.
-	Minor fixes in 2022
+
+   Minor fixes incorporated as of 1/4/96.
 */
+
+
+//#include <setjmp.h>
 #include "../../cpu/jmpbuf.h"
+
+//#include <math.h>
+
+//include <ctype.h>
+//#include <stdlib.h>
+
+//#include <string.h>
 #include "../../stdlibs/stdio_fs.h"
 #include "../../stdlibs/string.h"
 

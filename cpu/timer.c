@@ -3,6 +3,9 @@
 #include "../drivers/ports.h"
 #include "../kernel/util.h"
 #include "isr.h"
+#include "../kernel/thread.h"
+// Provide weak hook so builds without threading object still link
+void __attribute__((weak)) thread_preempt_tick(registers_t* r) { (void)r; }
 #include "../kernel/perf.h"
 
 
@@ -24,7 +27,11 @@ void update_sub_timers(uint32_t elapsed_time);
 static void timer_callback(registers_t *regs) {
     tick++;
     update_sub_timers(1); // Call this with a suitable interval (e.g., 1 ms) to update sub-timers
+    thread_preempt_tick(regs);
 }
+
+// Exposed for IRQ stub to switch stacks on preemptive scheduling
+volatile unsigned int g_sched_new_esp = 0;
 
 void sleep(int ms) {
     if (ms <= 0) return;
@@ -134,3 +141,4 @@ void update_sub_timers(uint32_t elapsed_time) {
         }
     }
 }
+ 

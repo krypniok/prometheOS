@@ -179,56 +179,77 @@ retry_chunk:
 
 
 int dma_write(uint32_t lba, void* buffer, uint32_t bytes) {
-    debug_puts("dma_write start lba=");
-    debug_puthex(lba);
-    debug_puts(" bytes=");
-    debug_puthex(bytes);
-    debug_puts("\n");
+    debug_puts("dma_write start\n");
+    if (bytes == 0) return 0;
 
-    // Ensure BM base is known
-    hdd_detect_bmio();
+    uint32_t total_sectors = (bytes + 511) / 512;
+    uint8_t* buf = (uint8_t*)buffer;
 
-    prdt.base = virt_to_phys(buffer);
-    prdt.count = bytes;
-    prdt.flags = 0x8000;
+    while (total_sectors > 0) {
+        // ATA allows max 256 sectors per command (0 means 256)
+        uint32_t chunk_sectors = (total_sectors > 256) ? 256 : total_sectors;
+        uint32_t chunk_bytes   = chunk_sectors * 512;
 
-    port_long_out(BM_PRDT_REG, virt_to_phys(&prdt));
-    port_byte_out(BM_STATUS_REG, 0x06);
+        // Build PRDT for this chunk: entries <=64KiB and not crossing 64KiB boundaries
+        uint32_t remaining = chunk_bytes;
+        uint8_t* cur = buf;
+        int prd_count = 0;
+        while (remaining > 0 && prd_count < MAX_PRDS) {
+            uint32_t to_boundary = 0x10000 - ((uint32_t)cur & 0xFFFF);
+            uint32_t piece = remaining;
+            if (piece > 0x10000) piece = 0x10000;
+            if (piece > to_boundary) piece = to_boundary;
+            prdt_table[prd_count].base  = virt_to_phys(cur);
+            prdt_table[prd_count].count = (piece == 0x10000) ? 0 : (uint16_t)piece; // 0 encodes 64KiB
+            prdt_table[prd_count].flags = 0x0000;
+            cur       += piece;
+            remaining -= piece;
+            prd_count++;
+        }
+        prdt_table[prd_count - 1].flags = 0x8000; // last entry
 
-    uint16_t sector_count = (bytes + 511) / 512;
-    uint16_t sector_count_port = 0x1F2;
-    uint16_t lba_low_port = 0x1F3;
-    uint16_t lba_mid_port = 0x1F4;
-    uint16_t lba_high_port = 0x1F5;
-    uint16_t device_port = 0x1F6;
-    uint16_t command_port = 0x1F7;
+        // Program PRDT (detect BM base if needed)
+        hdd_detect_bmio();
+        port_long_out(BM_PRDT_REG, virt_to_phys(prdt_table));
 
-    while (port_byte_in(command_port) & 0x80);
+        // Clear BM status (interrupt + error)
+        port_byte_out(BM_STATUS_REG, 0x06);
 
-    port_byte_out(device_port, 0xE0 | ((lba >> 24) & 0x0F));
-    port_byte_out(sector_count_port, sector_count);
-    port_byte_out(lba_low_port, lba & 0xFF);
-    port_byte_out(lba_mid_port, (lba >> 8) & 0xFF);
-    port_byte_out(lba_high_port, (lba >> 16) & 0xFF);
-    port_byte_out(command_port, 0xCA); // WRITE DMA
+        // Program ATA taskfile for WRITE DMA
+        while (port_byte_in(0x1F7) & 0x80); // wait BSY=0
+        port_byte_out(0x1F6, 0xE0 | ((lba >> 24) & 0x0F)); // LBA + master
+        port_byte_out(0x1F2, (chunk_sectors == 256) ? 0 : (chunk_sectors & 0xFF));
+        port_byte_out(0x1F3, lba & 0xFF);
+        port_byte_out(0x1F4, (lba >> 8) & 0xFF);
+        port_byte_out(0x1F5, (lba >> 16) & 0xFF);
+        port_byte_out(0x1F7, 0xCA); // WRITE DMA
 
-    // Start BM: R/W=1 (write to device), Start=1
-    port_byte_out(BM_COMMAND_REG, 0x03);
+        // Start BM: R/W=1 (write to device), Start=1
+        port_byte_out(BM_COMMAND_REG, 0x03);
 
-    uint8_t status;
-    do {
-        status = port_byte_in(BM_STATUS_REG);
-    } while (!(status & 0x04) && !(status & 0x02));
+        // Poll BM status: bit2=Interrupt, bit1=Error
+        uint8_t status;
+        do {
+            status = port_byte_in(BM_STATUS_REG);
+        } while (!(status & 0x04) && !(status & 0x02));
 
-    port_byte_out(BM_COMMAND_REG, 0x00);
-    port_byte_out(BM_STATUS_REG, status | 0x04);
+        // Stop and acknowledge interrupt
+        port_byte_out(BM_COMMAND_REG, 0x00);
+        port_byte_out(BM_STATUS_REG, status | 0x04);
 
-    debug_puts("dma_write end status=");
-    debug_puthex(status);
-    debug_puts("\n");
+        if (status & 0x02) {
+            // DMA failed; fall back to fast PIO for the rest of this transfer
+            debug_puts("DMA write failed; fallback to PIO fast for remaining\n");
+            write_to_disk_fast(lba, buf, total_sectors * 512);
+            return 0;
+        }
 
-    if (status & 0x02)
-        return -1;
+        // Advance
+        lba           += chunk_sectors;
+        buf           += chunk_bytes;
+        total_sectors -= chunk_sectors;
+    }
+
     return 0;
 }
 

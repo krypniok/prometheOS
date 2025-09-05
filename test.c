@@ -11,7 +11,7 @@ if(i < 0) {
 puts("numbers must be positive, try again\n");
 }
 else {
-for(j = 0; j < i; j=j+1) {
+for(j = 1; j <= i; j=j+1) {
 print(j);
 print("summed is");
 print(sum(j));

@@ -5,24 +5,48 @@
 
 #define TSQLFS_INIT_CAP 256
 
-static void ensure_capacity(TSQLFILE* f, size_t need_end) {
-    if (need_end <= f->capacity) return;
+// Ensure buffer can hold need_end bytes. Returns 1 on success, 0 on OOM.
+static int ensure_capacity(TSQLFILE* f, size_t need_end) {
+    if (need_end <= f->capacity) return 1;
     size_t newcap = f->capacity ? f->capacity : TSQLFS_INIT_CAP;
-    while (newcap < need_end) newcap *= 2;
+    while (newcap < need_end) {
+        size_t next = newcap * 2;
+        if (next <= newcap) { // overflow guard
+            next = need_end;
+        }
+        newcap = next;
+    }
     unsigned char* nb = (unsigned char*)realloc(f->buffer, newcap);
-    if (!nb) return; // out of memory; in kernel just leave as is
+    if (!nb) return 0; // out of memory; preserve old buffer
     // zero-fill the new region
     if (newcap > f->capacity) memset(nb + f->capacity, 0, newcap - f->capacity);
     f->buffer = nb;
     f->capacity = newcap;
+    return 1;
+}
+
+static int is_blank(const char* s){ if(!s) return 1; while(*s){ if(*s!=' '&&*s!='\t') return 0; s++; } return 1; }
+static void trim_name(const char** pin, char* out, size_t outsz){
+    const char* in = *pin ? *pin : "";
+    // ltrim
+    while (*in==' '||*in=='\t') in++;
+    // copy with limit
+    size_t n = strlen(in); if (n >= outsz) n = outsz-1;
+    memcpy(out, in, n); out[n]='\0';
+    // rtrim
+    while (n>0 && (out[n-1]==' '||out[n-1]=='\t')) { out[--n]='\0'; }
 }
 
 TSQLFILE* tsql_fopen(const char* name, const char* mode) {
+    // reject empty/null or blank names to avoid creating invisible entries
+    if (!name || !name[0] || is_blank(name)) return 0;
     hbdb_ensure_fs_table();
     TSQLFILE* f = (TSQLFILE*)malloc(sizeof(TSQLFILE));
     if (!f) return 0;
     memset(f, 0, sizeof(TSQLFILE));
-    strncpy(f->name, name, sizeof(f->name));
+    // copy trimmed name
+    trim_name(&name, f->name, sizeof(f->name));
+    if (f->name[0]=='\0') { free(f); return 0; }
     f->mode = mode && mode[0] ? mode[0] : 'r';
 
     if (f->mode == 'w') {
@@ -71,17 +95,31 @@ size_t tsql_fwrite(const void* ptr, size_t size, size_t count, TSQLFILE* stream)
     if (stream->mode == 'r') return 0;
     size_t bytes = size * count;
     size_t endpos = stream->pos + bytes;
-    ensure_capacity(stream, endpos);
+    if (!ensure_capacity(stream, endpos)) {
+        // write as much as fits to avoid memory corruption
+        if (stream->pos >= stream->capacity) return 0;
+        size_t writable = stream->capacity - stream->pos;
+        if (writable == 0) return 0;
+        memcpy(stream->buffer + stream->pos, ptr, writable);
+        stream->pos += writable;
+        if (stream->pos > stream->size) stream->size = stream->pos;
+        return writable / size; // return count-partial in items
+    }
     memcpy(stream->buffer + stream->pos, ptr, bytes);
     stream->pos += bytes;
     if (stream->pos > stream->size) stream->size = stream->pos;
-    return bytes;
+    return count;
 }
 
 int tsql_fclose(TSQLFILE* stream) {
     if (!stream) return -1;
-    // Commit back to TinySQL table
-    hbdb_fs_put(stream->name, stream->buffer, stream->size);
+    // Skip invalid/empty-name files to avoid creating "" entries
+    if (stream->name[0] != '\0') {
+        // Commit back to TinySQL table
+        // If this was a write stream but size==0 and you don't want empty files,
+        // you could skip here; by default we still create a 0-byte named file.
+        hbdb_fs_put(stream->name, stream->buffer, stream->size);
+    }
     // Optional autosave to image, but only if this was a write/append stream.
     // Avoid expensive full-DB saves after simple read-only closes.
     if (stream->mode != 'r') {

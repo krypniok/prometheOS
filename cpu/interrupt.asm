@@ -47,6 +47,15 @@ irq_common_stub:
     call irq_handler ; Different than the ISR code
     pop ebx  ; Different than the ISR code
 
+    ; Optional preemptive stack switch before restoring state
+    extern g_sched_new_esp
+    mov eax, [g_sched_new_esp]
+    test eax, eax
+    jz .no_switch_irq
+    mov esp, eax
+    mov dword [g_sched_new_esp], 0
+.no_switch_irq:
+
     ; 3. Restore state
     pop ebx
     mov ds, bx

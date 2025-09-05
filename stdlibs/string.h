@@ -23,3 +23,7 @@ void* search_string(void* start_address, size_t size, const char* str);
 char tolower(char c);
 bool isalnum(char c);
 bool isdigit(char c);
+
+
+unsigned long long atoull(const char *s);
+
