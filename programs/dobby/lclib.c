@@ -5,6 +5,7 @@
 #include <stddef.h>
 
 #include "../../kernel/conio.h"
+#include "../../kernel/bga_video.h"
 #define getchar getkey
 
 extern char *prog; /* points to current location in program */
@@ -36,11 +37,15 @@ void putback(void);
    your compiler does not support getche().) */
 int call_getche()
 {
-  char ch;
-  ch = getchar();
-  while(*prog!=')') prog++;
-  prog++;   /* advance to end of line */
-  return ch;
+  // Parse empty arg list: getche()
+  get_token(); if(*token!='(') sntx_err(PAREN_EXPECTED);
+  get_token(); if(*token!=')') sntx_err(PAREN_EXPECTED);
+  // Drain any buffered keys (e.g., leftover ENTER from command)
+  // by polling async until empty once
+  while (getkey_async() != 0) { /* drain */ }
+  // Wait for next key press
+  unsigned int sc = getkey();
+  return (int)(sc & 0xFF);
 }
 
 /* Put a character to the display. */
@@ -99,6 +104,106 @@ int call_puts(void)
   if(*token!=';') sntx_err(SEMI_EXPECTED);
   putback();
   return 0;
+}
+
+// --- BGA wrappers for Little C -------------------------------------------------
+// bga_drawpixel(x,y,color)
+int call_bga_drawpixel(void)
+{
+  int x=0,y=0,c=0;
+  get_token(); if(*token!='(') sntx_err(PAREN_EXPECTED);
+  eval_exp(&x); get_token(); if(*token!=',') sntx_err(PARAM_ERR);
+  eval_exp(&y); get_token(); if(*token!=',') sntx_err(PARAM_ERR);
+  eval_exp(&c); get_token(); if(*token!=')') sntx_err(PAREN_EXPECTED);
+  bga_drawpixel(x,y,(uint32_t)c);
+  return 0;
+}
+// bga_init(width, height) -> int (0 on success)
+int call_bga_init(void)
+{
+  int w=640, h=480;
+  get_token(); if(*token!='(') sntx_err(PAREN_EXPECTED);
+  eval_exp(&w);
+  get_token(); if(*token!=',') sntx_err(PARAM_ERR);
+  eval_exp(&h);
+  get_token(); if(*token!=')') sntx_err(PAREN_EXPECTED);
+  return bga_init(w,h);
+}
+
+// bga_close()
+int call_bga_close(void)
+{
+  get_token(); if(*token!='(') sntx_err(PAREN_EXPECTED);
+  get_token(); if(*token!=')') sntx_err(PAREN_EXPECTED);
+  bga_close();
+  return 0;
+}
+
+// bga_clear(color)
+int call_bga_clear(void)
+{
+  int c=0;
+  get_token(); if(*token!='(') sntx_err(PAREN_EXPECTED);
+  eval_exp(&c);
+  get_token(); if(*token!=')') sntx_err(PAREN_EXPECTED);
+  bga_clear((uint32_t)c);
+  return 0;
+}
+
+// bga_drawline(x0,y0,x1,y1,color)
+int call_bga_drawline(void)
+{
+  int x0=0,y0=0,x1=0,y1=0,c=0;
+  get_token(); if(*token!='(') sntx_err(PAREN_EXPECTED);
+  eval_exp(&x0); get_token(); if(*token!=',') sntx_err(PARAM_ERR);
+  eval_exp(&y0); get_token(); if(*token!=',') sntx_err(PARAM_ERR);
+  eval_exp(&x1); get_token(); if(*token!=',') sntx_err(PARAM_ERR);
+  eval_exp(&y1); get_token(); if(*token!=',') sntx_err(PARAM_ERR);
+  eval_exp(&c);
+  get_token(); if(*token!=')') sntx_err(PAREN_EXPECTED);
+  bga_drawline(x0,y0,x1,y1,(uint32_t)c);
+  return 0;
+}
+
+// bga_drawtri(x0,y0,x1,y1,x2,y2,color) (filled)
+int call_bga_drawtri(void)
+{
+  int x0=0,y0=0,x1=0,y1=0,x2=0,y2=0,c=0;
+  get_token(); if(*token!='(') sntx_err(PAREN_EXPECTED);
+  eval_exp(&x0); get_token(); if(*token!=',') sntx_err(PARAM_ERR);
+  eval_exp(&y0); get_token(); if(*token!=',') sntx_err(PARAM_ERR);
+  eval_exp(&x1); get_token(); if(*token!=',') sntx_err(PARAM_ERR);
+  eval_exp(&y1); get_token(); if(*token!=',') sntx_err(PARAM_ERR);
+  eval_exp(&x2); get_token(); if(*token!=',') sntx_err(PARAM_ERR);
+  eval_exp(&y2); get_token(); if(*token!=',') sntx_err(PARAM_ERR);
+  eval_exp(&c);
+  get_token(); if(*token!=')') sntx_err(PAREN_EXPECTED);
+  bga_drawtri(x0,y0,x1,y1,x2,y2,(uint32_t)c);
+  return 0;
+}
+
+// bga_is_active() -> int
+int call_bga_is_active(void)
+{
+  get_token(); if(*token!='(') sntx_err(PAREN_EXPECTED);
+  get_token(); if(*token!=')') sntx_err(PAREN_EXPECTED);
+  return bga_is_active();
+}
+
+// bga_width() -> int
+int call_bga_width(void)
+{
+  get_token(); if(*token!='(') sntx_err(PAREN_EXPECTED);
+  get_token(); if(*token!=')') sntx_err(PAREN_EXPECTED);
+  return bga_width();
+}
+
+// bga_height() -> int
+int call_bga_height(void)
+{
+  get_token(); if(*token!='(') sntx_err(PAREN_EXPECTED);
+  get_token(); if(*token!=')') sntx_err(PAREN_EXPECTED);
+  return bga_height();
 }
 
 /* Call beep(freq, ms) */

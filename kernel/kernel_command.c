@@ -59,6 +59,7 @@ static const help_entry g_help_entries[] = {
     {"em", "Text editor"},
     {"demo", "BGA demo"},
     {"sb16", "SB16 demo"},
+    {"txtmode", "Restore VGA 80x25 text mode"},
     {"thread_test", "Spawn two demo threads (coop/preempt)"},
     {"tsrtime", "Start clock thread top-right"},
     {"thread_kill <id>", "Signal a thread to stop"},

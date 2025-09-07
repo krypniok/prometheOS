@@ -3,6 +3,8 @@
 # $^ = all dependencies
 
 .PHONY: all run rerun echo debug clean test-env
+# Database tooling
+.PHONY: database database-ls database-clean payload-init
 
 # --- Quellen ---
 C_SOURCES = $(wildcard kernel/*.c drivers/*.c cpu/*.c stdlibs/*.c programs/*.c programs/dobby/*.c)
@@ -29,6 +31,7 @@ LITTLEC_OBJS = programs/dobby/parser.o \
 # --- Objektlisten ---
 COMMON_OBJS = boot/kernel_entry.o \
               kernel/bga_minimal.o \
+              kernel/bga_video.o \
               cpu/interrupt.o cpu/setjmp.o cpu/longjmp.o \
               kernel/conio.o kernel/kernel_command.o kernel/math.o kernel/fpu.o kernel/ui.o \
               kernel/mem.o kernel/time.o kernel/util.o kernel/perf.o kernel/rtc.o \
@@ -164,3 +167,40 @@ clean:
 	$(RM) stdlibs/*.o
 hbdbtool: tools/hbdbtool.c
 	gcc -O2 -o $@ $<
+
+# --- Database (HomebrewDB) ----------------------------------------------------
+# Place input files in ./payload and run `make database` to build database.hbdb
+PAYLOAD_DIR := payload
+PAYLOAD_FILES := $(wildcard $(PAYLOAD_DIR)/*)
+
+# Initialize payload dir and move example assets/scripts into it once
+payload-init:
+	@mkdir -p $(PAYLOAD_DIR)
+	@[ -f logo.bmp ] && mv -f logo.bmp $(PAYLOAD_DIR)/ || true
+	@[ -f explosion2.bmp ] && mv -f explosion2.bmp $(PAYLOAD_DIR)/ || true
+	@[ -f test.c ] && mv -f test.c $(PAYLOAD_DIR)/ || true
+	@[ -f beep.c ] && mv -f beep.c $(PAYLOAD_DIR)/ || true
+	@[ -f examples/bgatest.c ] && mv -f examples/bgatest.c $(PAYLOAD_DIR)/bgatest.c || true
+	@# If no beep.c present, create a minimal one
+	@if [ ! -f $(PAYLOAD_DIR)/beep.c ]; then \
+	  echo "main(){ beep(880,200); }" > $(PAYLOAD_DIR)/beep.c; \
+	  echo "[payload-init] created minimal beep.c"; \
+	fi
+
+# Build database.hbdb from all files in payload directory
+database: hbdbtool $(PAYLOAD_FILES)
+	@rm -f database.hbdb
+	@set -e; for f in $(PAYLOAD_FILES); do \
+	  bn=$$(basename "$$f"); \
+	  echo "put $$bn"; \
+	  ./hbdbtool put database.hbdb "$$bn" "$$f"; \
+	done
+	@echo "database.hbdb built with $$(ls -1 $(PAYLOAD_DIR) | wc -l) entries"
+
+# Inspect database on host
+database-ls: hbdbtool database.hbdb
+	./hbdbtool ls database.hbdb
+
+# Remove generated DB file
+database-clean:
+	$(RM) database.hbdb

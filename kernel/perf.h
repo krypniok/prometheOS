@@ -3,11 +3,16 @@
 
 #include <stdint.h>
 
-void perf_init(void);          // kalibriert den TSC
-uint64_t perf_rdtsc(void);     // roher TSC auslesen
-uint64_t perf_cpu_hz(void);    // gibt ermittelte MHz/Hz zurück
-uint64_t micros(void);         // aktuelle µs seit boot
-uint64_t millis(void);         // aktuelle ms seit boot
-void sleep_us(uint64_t us);    // busy-wait in µs (uses TSC)
+// perf_init: kalibriert TSC‑Ticks auf Hz
+void perf_init(void);
+// perf_rdtsc: rohen TSC auslesen
+uint64_t perf_rdtsc(void);
+// perf_cpu_hz: geschätzte CPU‑Frequenz in Hz
+uint64_t perf_cpu_hz(void);
+// micros/millis: monotone Zeit seit Boot (TSC‑basiert)
+uint64_t micros(void);
+uint64_t millis(void);
+// sleep_us: aktive Wartezeit mittels TSC (präzise, blockierend)
+void sleep_us(uint64_t us);
 
 #endif

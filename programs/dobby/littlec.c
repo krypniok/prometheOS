@@ -15,6 +15,7 @@
 //#include <string.h>
 #include "../../stdlibs/stdio_fs.h"
 #include "../../stdlibs/string.h"
+#include "../../kernel/bga_video.h"
 
 #include <stddef.h>
 
@@ -137,6 +138,14 @@ int dobby(const char* filename)
   /* set program pointer to start of program buffer */
   prog = p_buf;
 
+  /* establish error recovery point */
+  if (setjmp(&e_buf)) {
+    printf("\nAborted due to Little C error.\n");
+    // Ensure we restore text mode if a program crashed while BGA active
+    if (bga_is_active()) bga_close();
+    return 1;
+  }
+
   prescan(); /* find the location of all functions
                 and global variables in the program */
 
@@ -162,6 +171,7 @@ void interp_block(void)
   char block = 0;
 
   do {
+    char* tok_start = prog; /* remember position before token for rewinds */
     token_type = get_token();
 
     /* If interpreting single statement, return on
@@ -252,11 +262,37 @@ void prescan(void)
       if(*token=='{') brace++;
       if(*token=='}') brace--;
     }
+    char* tok_start = prog; /* remember start of next token */
     get_token();
 
-    if(tok==CHAR || tok==INT) { /* is global var */
-      putback();
-      decl_global();
+    if(tok==CHAR || tok==INT) {
+      /* Could be a typed function 'int foo(...)' or a global variable. Look ahead. */
+      char* after_type = prog; /* current position right after type token */
+      char namebuf[ID_LEN+1]; namebuf[0]='\0';
+      /* peek next tokens: identifier and maybe '(' */
+      int is_func = 0;
+      int saved_token_type = token_type; char saved_tok = tok;
+      char saved_token[80]; strcpy(saved_token, token);
+      int ttype = get_token();
+      if (ttype == IDENTIFIER) {
+        strcpy(namebuf, token);
+        int t2 = get_token();
+        if (*token == '(') {
+          /* typed function definition */
+          func_table[func_index].loc = prog;
+          strcpy(func_table[func_index].func_name, namebuf);
+          func_index++;
+          while(*prog!=')') prog++;
+          prog++; /* past closing ')' */
+          is_func = 1;
+        }
+      }
+      if (!is_func){
+        /* restore to before type to let decl_global() re-parse cleanly */
+        prog = tok_start;
+        token_type = saved_token_type; tok = saved_tok; strcpy(token, saved_token);
+        decl_global();
+      }
     }
     else if(token_type==IDENTIFIER) {
       strcpy(temp, token);

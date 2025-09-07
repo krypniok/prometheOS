@@ -25,24 +25,23 @@
 // helper
 #define FREQUENCY_TO_LSB_MSB(f) ((uint16_t)(1193180 / (f)))
 
-// api
-void console_sound_on(void);
-void console_play_sound(unsigned int freq);
-void console_sound_off(void);
+// Konsolen‑/PC‑Speaker‑API
+void console_sound_on(void);                 // Gate einschalten
+void console_play_sound(unsigned int freq);  // Ton abspielen
+void console_sound_off(void);                // Stille
 
-void beep(int freq, int ms);
-void beep_us(int freq, int us);
-void beep_stop_bg(void);
+void beep(int freq, int ms);                 // Blockierender Beep in ms
+void beep_us(int freq, int us);              // Blockierend in µs
+void beep_stop_bg(void);                     // Hintergrund‑Beep stoppen
 
-void beep_sequence(int start_freq, int end_freq, int duration_ms);
+void beep_sequence(int start_freq, int end_freq, int duration_ms); // Sweep
 
-void playDTMF(const char *sequence);
-void dtmf_stop_bg(void);
-
-int  dtmf_is_active(void);
+void playDTMF(const char *sequence);         // DTMF‑Sequenz synchron
+void dtmf_stop_bg(void);                     // DTMF‑Thread stoppen
+int  dtmf_is_active(void);                   // Läuft DTMF?
 
 // forward decls
-void dtmf_start_bg(const char* sequence);
-void beep_start_bg(int freq, int ms);
+void dtmf_start_bg(const char* sequence);    // DTMF asynchron
+void beep_start_bg(int freq, int ms);        // Beep asynchron
 
 #endif // BEEP_H

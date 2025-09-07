@@ -76,21 +76,16 @@ extern struct commands {
    they can be put into the internal function table that
    follows.
  */
-int call_getche(void), call_putch(void);
 int call_puts(void), print(void), getnum(void);
-int call_beep(void);
 int call_putnl(void);
 
 struct intern_func_type {
   char *f_name; /* function name */
   int (*p)();  /* pointer to the function */
 } intern_func[] = {
-  "getche", call_getche,
-  "putch", call_putch,
   "puts", call_puts,
   "print", print,
   "getnum", getnum,
-  "beep",  call_beep,
   "", 0  /* null terminate the list */
 };
 
@@ -285,6 +280,9 @@ void atom(int *value)
 
   switch(token_type) {
   case IDENTIFIER:
+    /* Save identifier token in case ext_call peeks ahead and alters it */
+    char saved_token[80]; char saved_token_type = token_type; char saved_tok = tok;
+    strcpy(saved_token, token);
     i = internal_func(token);
     if(i != -1) {  /* call "standard library" function */
       *value = (*intern_func[i].p)();
@@ -299,7 +297,11 @@ void atom(int *value)
       get_token();
       return;
     }
-    else *value = find_var(token);  /* get var's value */
+    else {
+      /* Restore identifier token before variable lookup */
+      strcpy(token, saved_token); token_type = saved_token_type; tok = saved_tok;
+      *value = find_var(token);  /* get var's value */
+    }
     get_token();
     return;
   case NUMBER: /* is numeric constant */
@@ -323,30 +325,69 @@ void atom(int *value)
 }
 
 /* Generic external dispatcher: parse args list and invoke kernel functions. */
-typedef void (*kfn_ii_t)(int,int);
-typedef struct { const char* name; const char* sig; void* fn; } kentry_t;
+// Supported signatures: args string of 'i' for ints; rettype: 'v' or 'i'
+typedef int  (*fn_i0_t)(void);        typedef void (*fn_v0_t)(void);
+typedef int  (*fn_i1_t)(int);         typedef void (*fn_v1_t)(int);
+typedef int  (*fn_i2_t)(int,int);     typedef void (*fn_v2_t)(int,int);
+typedef int  (*fn_i3_t)(int,int,int); typedef void (*fn_v3_t)(int,int,int);
+typedef int  (*fn_i4_t)(int,int,int,int);     typedef void (*fn_v4_t)(int,int,int,int);
+typedef int  (*fn_i5_t)(int,int,int,int,int); typedef void (*fn_v5_t)(int,int,int,int,int);
+typedef int  (*fn_i7_t)(int,int,int,int,int,int,int); typedef void (*fn_v7_t)(int,int,int,int,int,int,int);
+
+#include "../../kernel/bga_video.h"
+#include "../../kernel/conio.h"
+#include "../../drivers/keyboard.h"
+// Unified time API
+#include "../../kernel/time.h"
+
+typedef struct { const char* name; const char* args; char ret; void* fn; } kentry_t;
+// Small console helper to print a single character (kernel-side)
+static int __k_putch(int c){ if (c==13) printf("\n"); else printf("%c", c); return c; }
+static void __k_sleep_ms(int ms){ if (ms>0) sleep(ms); }
+static void __k_sleep_us(int us){ if (us>0) sleep_us((uint64_t)us); }
 static const kentry_t KFN[] = {
-  { "beep", "ii", (void*)(kfn_ii_t)beep },
-  { 0, 0, 0 }
+  // console/sound
+  { "putch",       "i",  'i', (void*)(fn_i1_t)__k_putch },
+  { "beep",        "ii", 'v', (void*)(fn_v2_t)beep },
+  { "sleep",       "i",  'v', (void*)(fn_v1_t)__k_sleep_ms },
+  { "sleep_us",    "i",  'v', (void*)(fn_v1_t)__k_sleep_us },
+  // keyboard
+  { "getkey",      "",   'i', (void*)(fn_i0_t)getkey },
+  { "getkey_async","",   'i', (void*)(fn_i0_t)getkey_async },
+  // BGA
+  { "bga_init",    "ii", 'i', (void*)(fn_i2_t)bga_init },
+  { "bga_close",   "",   'v', (void*)(fn_v0_t)bga_close },
+  { "bga_clear",   "i",  'v', (void*)(fn_v1_t)bga_clear },
+  { "bga_drawpixel","iii",'v', (void*)(fn_v3_t)bga_drawpixel },
+  { "bga_drawline","iiiii",'v',(void*)(fn_v5_t)bga_drawline },
+  { "bga_drawtri", "iiiiiii",'v',(void*)(fn_v7_t)bga_drawtri },
+  { "bga_is_active","",  'i', (void*)(fn_i0_t)bga_is_active },
+  { "bga_width",   "",   'i', (void*)(fn_i0_t)bga_width },
+  { "bga_height",  "",   'i', (void*)(fn_i0_t)bga_height },
+  // Text mode force (map to robust bga_close)
+  { "txtmode",     "",   'v', (void*)(fn_v0_t)bga_close },
+  { 0, 0, 0, 0 }
 };
 
 static int ext_call(const char* name, int* out_value)
 {
   if (!name || !name[0]) return 0;
+  // Copy function name locally because get_token() overwrites global 'token'
+  char fname[64]; int i=0; while (name[i] && i < (int)sizeof(fname)-1){ fname[i]=name[i]; i++; } fname[i]='\0';
   // Must be followed by '('
   get_token();
   if (*token != '(') { putback(); return 0; }
 
   // Lookup in registry
   const kentry_t* e = KFN; int found = 0;
-  while (e->name) { if (strcmp(e->name, name)==0){ found=1; break; } e++; }
+  while (e->name) { if (strcmp(e->name, fname)==0){ found=1; break; } e++; }
   if (!found) { // skip args until ')' and report unknown
     // consume until matching ')'
     int depth=1; do { get_token(); if (*token=='(') depth++; else if (*token==')') depth--; } while (depth>0 && tok!=FINISHED);
     return 0;
   }
 
-  // Parse arguments according to signature (currently supports only 'i')
+  // Parse arguments according to signature (supports only 'i')
   int args_i[8]; int argc=0; int val=0;
   // Check empty call first
   get_token();
@@ -360,12 +401,33 @@ static int ext_call(const char* name, int* out_value)
     if (*token != ')') sntx_err(PAREN_EXPECTED);
   }
 
-  // Invoke
-  if (strcmp(e->sig, "ii")==0) {
-    int a0 = (argc>0)?args_i[0]:0;
-    int a1 = (argc>1)?args_i[1]:0;
-    ((kfn_ii_t)e->fn)(a0, a1);
+  // Invoke based on arg count and return type
+  int n = (int)strlen(e->args);
+  if (e->ret=='v'){
+    switch(n){
+      case 0: ((fn_v0_t)e->fn)(); break;
+      case 1: ((fn_v1_t)e->fn)(args_i[0]); break;
+      case 2: ((fn_v2_t)e->fn)(args_i[0],args_i[1]); break;
+      case 3: ((fn_v3_t)e->fn)(args_i[0],args_i[1],args_i[2]); break;
+      case 4: ((fn_v4_t)e->fn)(args_i[0],args_i[1],args_i[2],args_i[3]); break;
+      case 5: ((fn_v5_t)e->fn)(args_i[0],args_i[1],args_i[2],args_i[3],args_i[4]); break;
+      case 7: ((fn_v7_t)e->fn)(args_i[0],args_i[1],args_i[2],args_i[3],args_i[4],args_i[5],args_i[6]); break;
+      default: sntx_err(PARAM_ERR);
+    }
     if (out_value) *out_value = 0;
+    return 1;
+  } else { // ret == 'i'
+    int r=0;
+    switch(n){
+      case 0: r=((fn_i0_t)e->fn)(); break;
+      case 1: r=((fn_i1_t)e->fn)(args_i[0]); break;
+      case 2: r=((fn_i2_t)e->fn)(args_i[0],args_i[1]); break;
+      case 3: r=((fn_i3_t)e->fn)(args_i[0],args_i[1],args_i[2]); break;
+      case 4: r=((fn_i4_t)e->fn)(args_i[0],args_i[1],args_i[2],args_i[3]); break;
+      case 5: r=((fn_i5_t)e->fn)(args_i[0],args_i[1],args_i[2],args_i[3],args_i[4]); break;
+      default: sntx_err(PARAM_ERR);
+    }
+    if (out_value) *out_value = r;
     return 1;
   }
 
@@ -374,6 +436,10 @@ static int ext_call(const char* name, int* out_value)
 }
 
 /* Display an error message. */
+// forward decl for debug console (isa-debugcon) when ENABLE_DEBUG
+void debug_puts(const char*);
+int sprintf(char*, const char*, ...);
+
 void sntx_err(int error)
 {
   char *p, *temp;
@@ -400,6 +466,9 @@ void sntx_err(int error)
     "too many local variables"
   };
   printf("\n%s\n", e[error]);
+  debug_puts("[dobby] syntax error: ");
+  debug_puts(e[error]);
+  debug_puts("\n");
   p = p_buf;
   while(p != prog) {  /* find line number of error */
     p++;
@@ -408,12 +477,24 @@ void sntx_err(int error)
     }
   }
   printf(" in line %d\n", linecount);
+  {
+    char buf[48];
+    sprintf(buf, "[dobby] in line %d\n", linecount);
+    debug_puts(buf);
+  }
 
   temp = p;
   for(i=0; i<20 && p>p_buf && *p!='\n'; i++, p--);
   for(i=0; i<30 && p<=temp; i++, p++) printf("%c", *p);
+  // Also mirror the snippet to the debug console
+  {
+    char snip[64]; int idx=0; p = temp- (i>0?i:0); if (p < p_buf) p = p_buf;
+    for (idx=0; idx< (int)sizeof(snip)-2 && p<=temp; idx++, p++) snip[idx]=*p;
+    snip[idx]='\n'; snip[idx+1]='\0';
+    debug_puts("[dobby] snippet: "); debug_puts(snip);
+  }
 
-  //longjmp(&e_buf, 1); /* return to safe point */
+  longjmp(&e_buf, 1); /* return to safe point */
 }
 
 /* Get a token. */

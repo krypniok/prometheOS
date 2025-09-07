@@ -50,6 +50,9 @@ extern void db_put(uint32_t,uint32_t,const char*); extern void db_get(uint32_t,u
 extern void db_rm(const char*); extern void db_edit(const char*); extern void font(const char*);
 extern void restart(void); extern void dobby(const char*); extern int editor_main(void);
 extern void bgademo(void); extern void sb16demo(void);
+extern void bga_close(void);
+// raw VGA restore without font/console helpers for diagnostics
+extern void vga_diag_txtforce(void);
 extern void dtmf(void); extern void dtmf_bg(const char*); extern void dtmf_stop(void); extern void perftest(void);
 extern int setpal(void); extern void snake_main(void); extern void random(void); extern void uptime(void);
 extern void hidecursor(void); extern void showcursor(void); extern void print_registers(void); extern void keycodes(void);
@@ -112,6 +115,8 @@ static const Cmd CMDS[] = {
     {"dobby",       T_STR,     dobby},
     {"em",          T0,        editor_main},
     {"demo",        T0,        bgademo},
+    {"txtmode",     T0,        bga_close},
+    {"txtforce",    T0,        vga_diag_txtforce},
     {"sb16",        T0,        sb16demo},
     {"thread_test", T0,        thread_test},
     {"sched_info",  T0,        sched_info},

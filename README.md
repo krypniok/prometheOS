@@ -1,70 +1,77 @@
 # PrometheOS 🔥
 
-## Beschreibung
-PrometheOS ist ein selbstgeschmiedetes 32-bit x86 Betriebssystem,  
-gebaut von Grund auf – Bootsektor, Kernel, Treiber, alles Handarbeit.  
+Kleines 32‑Bit x86‑Kernel‑Playground für QEMU: VGA‑Text, BGA‑Grafik, Keyboard/Mouse, SB16‑Audio, Threads (kooperativ/präemptiv), Zeitmessung via TSC – plus „Dobby“, ein eingebetteter Little‑C‑Interpreter mit Minidatenbank.
 
-Wie sein Namensgeber **Prometheus** bringt es das Feuer (Technik, Wissen)  
-in die kalte Leere der Maschine.  
-Kein Mainstream-OS, sondern ein Lern- und Forschungsprojekt:  
-Assembler trifft C, QEMU/Bochs werden zum Labor,  
-und jedes Bit wird von Hand gesetzt.  
+## Quick Start
 
-## Ziele
-- Minimaler, verständlicher Kernel  
-- Grafikmodus (BGA), Tastatur & Maus  
-- Multitasking & eigene Systemaufrufe  
-- Spielwiese für Experimente jenseits der Lehrbücher  
+Voraussetzungen: `qemu-system-i386` (oder x86_64), `nasm`, `gcc`, `make`.
 
-## Status
-- Bootloader läuft
-- Protected Mode aktiviert
-- Erste Kernelroutinen implementiert
-- Grafik & Input in Arbeit
+- `make`        – baut Kernel + Image
+- `make run`    – startet QEMU (HDD inkl. DB)
+- `make debug`  – startet QEMU mit GDB‑Stub (Port 1234)
 
-## Funktionalitäten
-- Bootloader & Protected Mode, CPU/IDT, Timer/Sub-Timer
-- VGA- und BGA-Grafik, Tastatur, Maus, HDD, DMA, Debug
-- Kernel-Konsole, Speicherverwaltung, FPU, Random, Perf-Counter, DTMF/Beep
-- Programme (Editor, Hexviewer, Snake, SB16-Demo)
-- Bibliotheken (string/stdio/memory, Text-UI)
-- HomebrewDB: einfache, integrierte DB als Dateisystem-Ersatz
-  - Dateien sind Blobs in der Tabelle `FS(name STRING, data BLOB)`
-  - Standard-API: `fopen/fread/fwrite/fclose` via `stdlibs/stdio_fs.h`
-  - Persistenz ins Disk-Image ab 1 MiB (LBA 2048)
-  - Kernel lädt DB beim Boot; Autosave optional/standardmäßig an
+### Payload / Database (HomebrewDB)
 
-### HomebrewDB (HBDB)
-- Max. DB-Payload im Kernel: 8 MiB (konfigurierbar)
-- Host-Tool `hbdbtool` (ls/cat/put/get/rm) für `database.hbdb`
-- Makefile injiziert nur noch `database.hbdb` (kein separates `logo.bmp`)
+Dateien für Dobby und Assets liegen in `payload/` und werden zu `database.hbdb` gebündelt.
 
-#### Kernel-Kommandos (Auszug)
-- `db_ls`, `db_cat <name>`: Dateien anzeigen
-- `db_edit <name>`: Datei im Editor öffnen (F2 speichert, F5 führt `dobby <name>` aus)
-- `db_put <addr> <len> <name>`, `db_get <addr> <max> <name>`, `db_rm <name>`
-- `db_loadimg`, `db_saveimg`: DB <-> Image (schreibt nur benötigte Länge)
-- `db_autosave_on/off`: Speichern bei `fclose` aktivieren/deaktivieren
-- `dobby <name>`: Little C Script aus DB ausführen
+- `make payload-init` – legt `payload/` an und verschiebt Beispiele (bmp, *.c)
+- `make database`     – baut die DB aus allen Dateien in `payload/`
+- `make database-ls`  – listet DB‑Inhalt
 
-#### Editor
-- F2: speichert in die DB (nicht auf Disk direkt)
-- F5: führt `dobby` für die bearbeitete DB-Datei aus
+Beispielablauf:
 
-#### Image-Layout & Makefile
-- Layout (LBA / Sektoren à 512 Byte):
-  - 0: MBR (512 B)
-  - 1: frei (reservert)
-  - 2..127: kernel_stub.bin
-  - 128..129: Puffer
-  - 130..(130+16383): Kernel (max. 8 MiB, 16384 Sektoren)
-  - 16514..(16514+65535): HomebrewDB (32 MiB)
-- `make`: baut Kernel/Image, startet QEMU nicht
-- `make run`: baut und startet QEMU, injiziert `database.hbdb` ab LBA 16514, extrahiert 32 MiB zurück
+```
+make payload-init
+make database
+make run
+```
 
-### Migration auf HBDB
-- Alte TinySQL-Befehle entfernt (tinysql/tinysql2). HBDB ersetzt Speicherung vollständig.
+Im Kernel‑Prompt: `db_ls`, `dobby beep.c`, `dobby bgatest.c`, `dobby bga_gradient.c`.
 
----
+## Kernel‑Befehle (Auswahl)
 
-„PrometheOS – mehr als ein OS, ein Funke.“  
+- `help`, `help <cmd>`
+- `demo` (BGA), `sb16` (Soundblaster)
+- `dobby <name>` (Little C aus DB)
+- `thread_test`, `sched_info`, `sched_mode <preempt|coop>`
+- `db_ls`, `db_cat <name>`, `db_edit <name>`
+
+## BGA‑Grafik
+
+API in `kernel/bga_video.h` (deutsche Kurz‑Doku im Header):
+- `bga_init(w,h)` / `bga_close()`
+- `bga_clear(c)`, `bga_drawpixel(x,y,c)`
+- `bga_drawline(...)`, `bga_drawtri(...)`
+- `bga_blit(...)`, `bga_is_active()`, `bga_width()`, `bga_height()`
+
+Dobby‑Wrapper: identische Funktionsnamen verfügbar. Beispiele:
+- `payload/bgatest.c` – Linien, Fadenkreuz, Dreieck
+- `payload/bga_gradient.c` – Pixel‑Gradient
+
+Hinweis Little‑C:
+- Nur `/* ... */`‑Kommentare (kein `//`).
+- Getypte Funktionsköpfe (`int foo(...)`) werden unterstützt.
+
+## Threads / Zeit / Audio
+
+- Threads: `kernel/thread.h` (Kurz‑Doku im Header). Kooperatives `thread_yield()`, Präemption per IRQ0.
+- Zeit/Perf: zentrales `kernel/time.h` (sleep, sleep_us, micros, millis). RTC in `kernel/rtc.h`.
+- Audio (PC‑Speaker): `beep`, `beep_sequence`, DTMF‑Helfer (siehe `kernel/conio.h`).
+
+## Struktur
+
+- `kernel/` – Kernelsubsyst. (Grafik, Konsole, Zeit, UI, Scheduler)
+- `drivers/` – VGA/Ports/PCI/Keyboard/Mouse/SB16
+- `cpu/` – IDT/ISR/Timer/jmpbuf
+- `stdlibs/` – kleine libc‑Helfer, DB, BMP, Font
+- `programs/` – Demos/Editor; `programs/dobby/` – Interpreter
+- `payload/` – Dateien, die in die DB gebündelt werden
+
+## Troubleshooting
+
+- „semicolon expected“ in Dobby: `;` vergessen oder falsche Kommentarart.
+- Kein Ton: Audio‑Backend von QEMU prüfen (`make test-env`).
+
+—
+
+„PrometheOS – mehr als ein OS, ein Funke.“
