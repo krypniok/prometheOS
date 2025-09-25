@@ -2,6 +2,10 @@
 #include "../cpu/timer.h"
 #include "perf.h"
 #include "conio.h"
+#include "../kernel/thread.h"
+#include "../stdlibs/stdio_fs.h"
+#include "../stdlibs/memory.h"
+#include "../stdlibs/string.h"
 
 
 void console_sound_on() {
@@ -38,6 +42,15 @@ void console_play_sound(unsigned int freq) {
     // Program PIT channel 2
     pcspk_prime_mode();
     pcspk_set_div(div);
+}
+
+void console_set_freq_nogate(unsigned int freq){
+    if (freq < 20) freq = 20; if (freq > 20000) freq = 20000;
+    uint16_t div = (uint16_t)FREQUENCY_TO_LSB_MSB(freq);
+    if (div == 0) div = 1;
+    // Only update divider (LSB then MSB); do not re-prime mode to avoid glitches
+    port_byte_out(0x42, (uint8_t)(div & 0xFF));
+    port_byte_out(0x42, (uint8_t)((div >> 8) & 0xFF));
 }
  
 void console_sound_off() {
@@ -266,3 +279,115 @@ int sscanf(const char *str, const char *format, int *arg1, int *arg2) {
 // forward decls for background audio helpers
 void dtmf_start_bg(const char* sequence);
 void beep_start_bg(int freq, int ms);
+
+/* ===== Simple WAV player (8-bit mono PCM @ 11025 Hz) ===== */
+typedef struct {
+    uint8_t* data;
+    uint32_t length;   // bytes == samples for 8-bit mono
+    uint32_t pos;      // current sample index
+    uint16_t rate;     // sample rate, expect 11025
+    uint16_t channels; // expect 1
+    uint16_t bits;     // expect 8
+    int      playing;
+    int      fast_tick_registered;
+} WavState;
+
+static WavState g_wav = {0};
+static volatile int g_wav_stop_req = 0;
+static int g_wav_thread_id = -1;
+
+// Background playback via PWM gating within each 11025 Hz sample window
+static void _wav_thread(void){
+    // High-carrier PWM on PC speaker (bit1 gate) with bit0 speaker enabled.
+    // Carrier ~ 12 kHz to push the base tone higher; duty follows 8-bit sample.
+    const uint64_t sample_us = 1000000ULL / 11025ULL; // ~90.7us per sample
+    g_wav_stop_req = 0; g_wav.playing = 1;
+
+    // Program PIT ch2 to ~12 kHz once (mode 3)
+    port_byte_out(0x43, 0xB6);
+    uint16_t div = (uint16_t)FREQUENCY_TO_LSB_MSB(12000);
+    if (!div) div = 1;
+    port_byte_out(0x42, (uint8_t)(div & 0xFF));
+    port_byte_out(0x42, (uint8_t)((div >> 8) & 0xFF));
+    // Enable speaker (bit0=1), start with gate off
+    uint8_t base = port_byte_in(0x61) | 0x01; base &= (uint8_t)~0x02; port_byte_out(0x61, base);
+
+    uint32_t i = g_wav.pos;
+    while (!thread_should_stop() && !g_wav_stop_req && i < g_wav.length){
+        uint8_t s = g_wav.data[i++];
+        uint64_t on_us = (uint64_t)s * sample_us / 255ULL;
+        uint64_t t0 = micros();
+        if (on_us){
+            uint8_t v = base | 0x02; port_byte_out(0x61, v); // gate on
+            while ((micros() - t0) < on_us) { /* spin */ }
+        }
+        // gate off for remainder
+        uint8_t v2 = base & (uint8_t)~0x02; port_byte_out(0x61, v2);
+        while ((micros() - t0) < sample_us) { /* spin */ }
+    }
+    g_wav.pos = i; g_wav.playing = 0;
+    // speaker off
+    uint8_t v = port_byte_in(0x61) & (uint8_t)~0x03; port_byte_out(0x61, v);
+}
+
+static int parse_wav(FILE* f, uint16_t* out_ch, uint16_t* out_bits, uint32_t* out_rate, uint8_t** out_data, uint32_t* out_len){
+    char riff[4]; uint32_t riff_sz=0; char wave[4];
+    if (fread(riff,1,4,f)!=4 || fread(&riff_sz,1,4,f)!=4 || fread(wave,1,4,f)!=4) return 0;
+    if (memcmp(riff,"RIFF",4)!=0 || memcmp(wave,"WAVE",4)!=0) return 0;
+    int have_fmt=0, have_data=0; uint16_t ch=0,bps=0; uint32_t rate=0; uint8_t* data=0; uint32_t dlen=0;
+    while (!have_data){
+        char id[4]; uint32_t sz=0; if (fread(id,1,4,f)!=4 || fread(&sz,1,4,f)!=4) break;
+        if (memcmp(id,"fmt ",4)==0){
+            // PCM fmt
+            uint16_t fmtTag=0; if (fread(&fmtTag,1,2,f)!=2) return 0;
+            if (fread(&ch,1,2,f)!=2) return 0;
+            if (fread(&rate,1,4,f)!=4) return 0;
+            uint32_t byteRate; uint16_t align; if (fread(&byteRate,1,4,f)!=4) return 0; if (fread(&align,1,2,f)!=2) return 0;
+            if (fread(&bps,1,2,f)!=2) return 0;
+            // skip any extra fmt bytes
+            uint32_t readsz = 2+2+4+4+2+2; if (sz > readsz){ size_t left = sz - readsz; while (left){ char drop[64]; size_t k = left>sizeof(drop)?sizeof(drop):left; size_t r=fread(drop,1,k,f); if(!r) break; left -= (uint32_t)r; } }
+            if (fmtTag != 1) return 0; // PCM only
+            have_fmt=1;
+        } else if (memcmp(id,"data",4)==0){
+            dlen = sz; data = (uint8_t*)malloc(dlen);
+            if (!data) return 0;
+            if (fread(data,1,dlen,f) != dlen){ free(data); return 0; }
+            have_data=1;
+        } else {
+            // skip unknown chunk
+            size_t left = sz; while (left){ char drop[64]; size_t k = left>sizeof(drop)?sizeof(drop):left; size_t r=fread(drop,1,k,f); if(!r) break; left -= (uint32_t)r; }
+        }
+    }
+    if (!have_fmt || !have_data){ if (data) free(data); return 0; }
+    *out_ch = ch; *out_bits = bps; *out_rate = rate; *out_data = data; *out_len = dlen; return 1;
+}
+
+int loadWAV(const char* name){
+    if (!name || !name[0]) { printf("usage: loadWAV <file.wav>\n"); return 0; }
+    FILE* f = fopen(name, "rb");
+    if (!f) { printf("wav: cannot open %s\n", name); return 0; }
+    uint16_t ch=0,bps=0; uint32_t rate=0; uint8_t* data=0; uint32_t len=0;
+    int ok = parse_wav(f,&ch,&bps,&rate,&data,&len);
+    fclose(f);
+    if (!ok){ printf("wav: invalid or unsupported file\n"); return 0; }
+    if (!(ch==1 && bps==8)) { printf("wav: only 8-bit mono supported\n"); free(data); return 0; }
+    if (rate != 11025) { printf("wav: expected 11025 Hz, got %d\n", (int)rate); free(data); return 0; }
+    if (g_wav.data) { free(g_wav.data); g_wav.data = 0; }
+    g_wav.data = data; g_wav.length = len; g_wav.pos = 0; g_wav.channels = ch; g_wav.bits = bps; g_wav.rate = (uint16_t)rate; g_wav.playing = 0;
+    // No IRQ hook needed; playback runs in a dedicated thread using PWM gating
+    printf("wav: loaded %s (%d bytes)\n", name, (int)len);
+    return 1;
+}
+
+void playWAV(void){
+    if (!g_wav.data || g_wav.length==0){ printf("wav: nothing loaded\n"); return; }
+    if (g_wav_thread_id >= 0) { stopWAV(); thread_join(g_wav_thread_id); g_wav_thread_id = -1; }
+    g_wav.pos = 0; g_wav_stop_req = 0; g_wav.playing = 1;
+    g_wav_thread_id = thread_create(_wav_thread);
+    printf("wav: playing (thread %d)\n", g_wav_thread_id);
+}
+
+void stopWAV(void){
+    g_wav_stop_req = 1; console_sound_off();
+    if (g_wav_thread_id >= 0) { thread_join(g_wav_thread_id); g_wav_thread_id = -1; }
+}

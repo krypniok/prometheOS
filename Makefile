@@ -45,18 +45,18 @@ COMMON_OBJS = boot/kernel_entry.o \
               stdlibs/tsqlfs.o \
               programs/editor.o kernel/logo.o \
               programs/snake.o programs/snaketext.o \
-              programs/sb16demo.o \
               kernel/thread.o \
               $(LITTLEC_OBJS)
 
 COMMON_OBJS_STUB = boot/kernel_entry.o \
               cpu/interrupt.o cpu/setjmp.o cpu/longjmp.o \
-              kernel/conio.o kernel/math.o kernel/perf.o \
+              kernel/conio.o kernel/math.o kernel/perf.o kernel/thread.o \
               kernel/mem.o kernel/time.o kernel/util.o kernel/rtc.o \
               drivers/debug.o drivers/display.o drivers/hdd.o drivers/hidden_cmd.o \
               drivers/keyboard.o drivers/ports.o drivers/video.o drivers/pci.o \
               cpu/idt.o cpu/isr.o cpu/timer.o \
-              stdlibs/file.o stdlibs/memory.o stdlibs/stdio.o stdlibs/string.o
+              stdlibs/file.o stdlibs/memory.o stdlibs/stdio.o stdlibs/string.o \
+              stdlibs/tsqlfs.o stdlibs/homebrewdb.o
 
 # --- Build Kernel Stub + Kernel ---
 kernel_stub.bin: $(COMMON_OBJS_STUB) kernel/kernel_stub.o
@@ -87,20 +87,20 @@ QEMU64 := $(shell command -v qemu-system-x86_64 2>/dev/null)
 QEMU   := $(if $(QEMU32),$(QEMU32),$(QEMU64))
 CPU32  := $(if $(QEMU32),, -cpu qemu32)
 
-# --- Audio backend auto-detect (pa -> pipewire -> alsa -> sdl) ---
-AUDIO_DRV := $(shell \
+# --- Audio backend auto-detect (pa -> pipewire -> alsa -> sdl); fallback to SDL ---
+AUDIO_DRV ?= $(shell \
   if [ -n "$(QEMU)" ]; then \
     "$(QEMU)" -audio help 2>/dev/null | awk '/Available audio drivers:/{ok=1;next} ok{gsub(",","");print}' \
     | tr ' ' '\n' | grep -E '^(pa|pipewire|alsa|sdl)$$' | head -n1 ; \
   fi)
-
+# Default to SDL if detection failed
 ifeq ($(strip $(AUDIO_DRV)),)
-  $(warning Kein QEMU-Audio-Treiber erkannt. Starte mit stummem SB16.)
-  SOUND := -device sb16
-else
-  AUDIODEV := -audiodev $(AUDIO_DRV),id=snd
-  SOUND := $(AUDIODEV) -device sb16,audiodev=snd -machine pcspk-audiodev=snd
+  AUDIO_DRV := sdl
+  $(warning Kein Audio-Treiber erkannt – verwende SDL als Fallback.)
 endif
+AUDIODEV := -audiodev $(AUDIO_DRV),id=snd
+# Always route both SB16 and PC speaker through the selected audio backend
+SOUND := $(AUDIODEV) -device sb16,audiodev=snd -machine pcspk-audiodev=snd
 
 # --- Lauf-Flags ---
 RUNFLAGS := -m 1024 -rtc base=localtime,clock=host,driftfix=slew -vga std $(CPU32)
@@ -204,3 +204,15 @@ database-ls: hbdbtool database.hbdb
 # Remove generated DB file
 database-clean:
 	$(RM) database.hbdb
+
+# --- Git push helper ---
+push:
+	@echo "==> cleaning build artefacts..."
+	$(MAKE) clean
+	rm -f *.bin *.img
+	@echo "==> adding changes..."
+	git add .
+	@echo "==> committing..."
+	git commit -m "$(if $(m),$(m),auto-push from make)"
+	@echo "==> pushing..."
+	git push origin main

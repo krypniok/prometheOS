@@ -17,6 +17,7 @@ int isalpha(int c) {
     return ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z'));
 }
 
+int txtmode(void);
 
 #define NUM_FUNC        100
 #define NUM_GLOBAL_VARS 100
@@ -365,7 +366,7 @@ static const kentry_t KFN[] = {
   { "bga_width",   "",   'i', (void*)(fn_i0_t)bga_width },
   { "bga_height",  "",   'i', (void*)(fn_i0_t)bga_height },
   // Text mode force (map to robust bga_close)
-  { "txtmode",     "",   'v', (void*)(fn_v0_t)bga_close },
+  { "txtmode",     "",   'v', (void*)(fn_v0_t)txtmode },
   { 0, 0, 0, 0 }
 };
 

@@ -41,7 +41,9 @@ main()
 
   /* Taste oder Timeout (5s) */
   puts("Press any key or wait 5s...\n");
-  sleep(2000);
+
+	/* Warten auf Tastendruck oder Timeout */
+	puts("Press any key or wait 5s...\n");
   {
     int waited; int done; int sc;
     waited = 0; done = 0;

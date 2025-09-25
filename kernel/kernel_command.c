@@ -58,7 +58,6 @@ static const help_entry g_help_entries[] = {
     {"dobby <name>", "Run Little C from DB"},
     {"em", "Text editor"},
     {"demo", "BGA demo"},
-    {"sb16", "SB16 demo"},
     {"txtmode", "Restore VGA 80x25 text mode"},
     {"thread_test", "Spawn two demo threads (coop/preempt)"},
     {"tsrtime", "Start clock thread top-right"},
@@ -95,6 +94,12 @@ static const help_entry g_help_entries[] = {
     {"beep_bg <f> <ms>", "PC speaker non-blocking"},
     {"beep_stop", "Stop background beep"},
     {"beep_sequence <f0> <f1> <ms>", "Sweep from f0 to f1 over ms"},
+    {"wav_load <name>", "Load 8-bit mono 11025 Hz WAV"},
+    {"wav_play", "Play loaded WAV via PC speaker"},
+    {"wav_stop", "Stop WAV playback"},
+    {"pcspk <f> <ms>", "Direct PC speaker test"},
+    {"pcspk_sweep <f0> <f1> <step> <ms>", "Frequency sweep via PC speaker"},
+    {"pcspk_gliss <f0> <f1> <ms>", "Continuous glide without gaps"},
     {"printf \"fmt\"", "Formatted print"},
     {"searchs <addr> <len> <str>", "Search string"},
     {"palflash <idx>", "Cycle one VGA palette entry"},
@@ -260,6 +265,11 @@ void perftest() {
 
 void beepus(int freq, int us) { if (us > 0) beep_us(freq, us); }
 
+// WAV wrappers
+void wav_load(const char* name){ if (!loadWAV(name)) printf("wav load failed\n"); }
+void wav_play_cmd(void){ playWAV(); }
+void wav_stop_cmd(void){ stopWAV(); }
+
 // Print current wall clock time (RTC + micros)
 void now(void){ char buf[32]; time_now_iso(buf, sizeof(buf)); printf("%s\n", buf); }
 
@@ -375,9 +385,18 @@ static void _editor_save_to_db(unsigned char* buf, int len){ if (!g_dbedit_name)
 static void _editor_run_from_db(void){ if (!g_dbedit_name) return; dobby(g_dbedit_name); }
 void db_edit(const char* name){
     g_dbedit_name = name;
-    // Load from DB to 0x300000 buffer
-    unsigned char* data=0; size_t sz=0; unsigned char* text_buffer=(unsigned char*)0x300000; memset(text_buffer,0,1024*1024);
-    if (hbdb_fs_get(name, &data, &sz) && data) { size_t cp = sz < 1024*1024 ? sz : 1024*1024; memcpy(text_buffer, data, cp); free(data); }
+    unsigned char* data = 0; size_t sz = 0;
+    unsigned char* text_buffer = editor_get_buffer();
+    editor_reset_buffer();
+    if (hbdb_fs_get(name, &data, &sz) && data) {
+        size_t cap = (size_t)editor_buffer_capacity();
+        size_t limit = (cap > 0) ? (cap - 1) : 0;
+        size_t cp = sz < limit ? sz : limit;
+        if (cp > 0) memcpy(text_buffer, data, cp);
+        text_buffer[cp] = '\0';
+        free(data);
+    }
+    editor_set_filename_hint(name);
     editor_set_save_callback(_editor_save_to_db);
     editor_set_run_callback(_editor_run_from_db);
     editor_main();
@@ -593,3 +612,54 @@ void kernel_console_clear() {
 
     // message_box and msgbox moved to kernel/ui.c
     
+// Diagnostic: raw PC speaker test independent of sub-timers
+void pcspk_test(uint32_t freq, uint32_t ms){
+    if (ms == 0) ms = 200;
+    if (freq < 20) freq = 20; if (freq > 20000) freq = 20000;
+    console_play_sound((int)freq);
+    console_sound_on();
+    sleep_us((uint64_t)ms * 1000ULL);
+    console_sound_off();
+}
+
+// pcspk_sweep <f0> <f1> <step> <ms_per_step>
+void pcspk_sweep(uint32_t f0, uint32_t f1, uint32_t step, uint32_t ms){
+    if (step == 0) step = 50;
+    if (ms == 0) ms = 50;
+    int dir = (f1 >= f0) ? 1 : -1;
+    int s = (int)step * dir;
+    for (int f = (int)f0; (dir>0)?(f <= (int)f1):(f >= (int)f1); f += s){
+        int ff = f; if (ff < 20) ff = 20; if (ff > 20000) ff = 20000;
+        console_play_sound((unsigned int)ff);
+        console_sound_on();
+        sleep_us((uint64_t)ms * 1000ULL);
+        console_sound_off();
+        sleep_us(10000); // 10 ms gap for clarity
+    }
+}
+
+void pcspk_sweep3(uint32_t f0, uint32_t f1, uint32_t step){ pcspk_sweep(f0,f1,step,50); }
+
+// pcspk_gliss: continuous frequency glide without gaps using 200us update
+void pcspk_gliss(uint32_t f0, uint32_t f1, uint32_t dur_ms){
+    if (dur_ms == 0) dur_ms = 500;
+    if (f0 < 20) f0 = 20; if (f0 > 20000) f0 = 20000;
+    if (f1 < 20) f1 = 20; if (f1 > 20000) f1 = 20000;
+    uint64_t us_total = (uint64_t)dur_ms * 1000ULL;
+    const uint64_t step_us = 100ULL; // finer updates (0.1 ms)
+    uint64_t steps64 = us_total / step_us; if (steps64 < 1) steps64 = 1;
+    uint32_t steps = (steps64 > 1000000ULL) ? 1000000u : (uint32_t)steps64;
+
+    // Prime mode once, keep speaker+gate on for entire glide
+    port_byte_out(0x43, 0xB6);
+    uint8_t v = port_byte_in(0x61) | 0x03; port_byte_out(0x61, v);
+
+    uint64_t t0 = micros();
+    for (uint32_t i=0; i<=steps; i++){
+        // linear interpolation
+        uint32_t freq = (uint32_t)( ( (uint64_t)f0 * (steps - i) + (uint64_t)f1 * i ) / (steps) );
+        console_set_freq_nogate((int)freq);
+        uint64_t target = t0 + (uint64_t)i * step_us;
+        while ((int64_t)(micros() - target) < 0) { /* spin */ }
+    }
+}

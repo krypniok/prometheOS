@@ -20,13 +20,37 @@ typedef struct {
 SubTimer sub_timers[MAX_SUB_TIMERS];
 uint8_t num_sub_timers = 0;
 
-uint32_t tick = 0;
+// Millisecond tick counter for regular timing APIs
+static uint32_t g_ms_tick = 0;
+// Configured PIT frequency (Hz)
+static uint32_t g_timer_hz = 1000;
+// Accumulator to convert high-rate PIT ticks into whole milliseconds
+static uint32_t g_ms_accum = 0; // counts in units of "ms*Hz" (add 1000 per IRQ)
+// Optional high-frequency callback (called each IRQ at g_timer_hz)
+static void (*g_fast_tick_cb)(void) = 0;
 
 void update_sub_timers(uint32_t elapsed_time);
 
+// Expose timer hz for other modules
+uint32_t timer_hz(void) { return g_timer_hz; }
+unsigned int GetTicks() { return g_ms_tick; }
+void register_fast_tick(void (*cb)(void)) { g_fast_tick_cb = cb; }
+
 static void timer_callback(registers_t *regs) {
-    tick++;
-    update_sub_timers(1); // Call this with a suitable interval (e.g., 1 ms) to update sub-timers
+    // High-rate hook (e.g., audio at 11.025 kHz)
+    if (g_fast_tick_cb) g_fast_tick_cb();
+
+    // Accumulate milliseconds from configured PIT frequency
+    // Add 1000 (ms per second) each IRQ; once we reach g_timer_hz, one ms elapsed
+    g_ms_accum += 1000;
+    if (g_ms_accum >= g_timer_hz) {
+        uint32_t ms = g_ms_accum / g_timer_hz;
+        g_ms_accum -= ms * g_timer_hz;
+        g_ms_tick += ms;
+        update_sub_timers(ms);
+    }
+
+    // Preemption bookkeeping per IRQ
     thread_preempt_tick(regs);
 }
 
@@ -42,12 +66,8 @@ void sleep(int ms) {
         return;
     }
     // Fallback to PIT ticks at ~1 kHz
-    uint32_t ts = tick;
-    while ((tick - ts) < (uint32_t)ms) { /* spin */ }
-}
-
-unsigned int GetTicks() {
-    return tick;
+    uint32_t ts = g_ms_tick;
+    while ((g_ms_tick - ts) < (uint32_t)ms) { /* spin */ }
 }
 
 void sub_timer_callback() {
@@ -82,6 +102,7 @@ void init_timer(uint32_t freq) {
     register_interrupt_handler(IRQ0, timer_callback);
 
     /* Get the PIT value: hardware clock at 1193180 Hz */
+    g_timer_hz = (freq == 0) ? 1000 : freq;
     uint32_t divisor = 1193180 / freq;
     uint8_t low  = (uint8_t)(divisor & 0xFF);
     uint8_t high = (uint8_t)((divisor >> 8) & 0xFF);

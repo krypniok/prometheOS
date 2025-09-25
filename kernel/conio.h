@@ -29,6 +29,7 @@
 void console_sound_on(void);                 // Gate einschalten
 void console_play_sound(unsigned int freq);  // Ton abspielen
 void console_sound_off(void);                // Stille
+void console_set_freq_nogate(unsigned int freq); // Nur Frequenz setzen (Gate/Speaker unverändert)
 
 void beep(int freq, int ms);                 // Blockierender Beep in ms
 void beep_us(int freq, int us);              // Blockierend in µs
@@ -43,5 +44,10 @@ int  dtmf_is_active(void);                   // Läuft DTMF?
 // forward decls
 void dtmf_start_bg(const char* sequence);    // DTMF asynchron
 void beep_start_bg(int freq, int ms);        // Beep asynchron
+
+// WAV loader/player (8-bit mono PCM @ 11025 Hz)
+int  loadWAV(const char* name);              // returns 1 on success
+void playWAV(void);                          // start playback of last loaded WAV
+void stopWAV(void);                          // stop playback
 
 #endif // BEEP_H

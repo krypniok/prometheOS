@@ -28,4 +28,4 @@ int  bga_width(void);
 int  bga_height(void);
 
 // Public helper: force VGA 80x25 text mode restore (safe even if BGA inactive)
-void txtmode(void);
+int txtmode(void);

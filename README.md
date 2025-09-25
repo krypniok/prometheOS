@@ -1,6 +1,6 @@
 # PrometheOS 🔥
 
-Kleines 32‑Bit x86‑Kernel‑Playground für QEMU: VGA‑Text, BGA‑Grafik, Keyboard/Mouse, SB16‑Audio, Threads (kooperativ/präemptiv), Zeitmessung via TSC – plus „Dobby“, ein eingebetteter Little‑C‑Interpreter mit Minidatenbank.
+Kleines 32‑Bit x86‑Kernel‑Playground für QEMU: VGA‑Text, BGA‑Grafik, Keyboard/Mouse, Threads (kooperativ/präemptiv), Zeitmessung via TSC – plus „Dobby“, ein eingebetteter Little‑C‑Interpreter mit Minidatenbank.
 
 ## Quick Start
 
@@ -31,7 +31,7 @@ Im Kernel‑Prompt: `db_ls`, `dobby beep.c`, `dobby bgatest.c`, `dobby bga_gradi
 ## Kernel‑Befehle (Auswahl)
 
 - `help`, `help <cmd>`
-- `demo` (BGA), `sb16` (Soundblaster)
+- `demo` (BGA)
 - `dobby <name>` (Little C aus DB)
 - `thread_test`, `sched_info`, `sched_mode <preempt|coop>`
 - `db_ls`, `db_cat <name>`, `db_edit <name>`
@@ -61,7 +61,7 @@ Hinweis Little‑C:
 ## Struktur
 
 - `kernel/` – Kernelsubsyst. (Grafik, Konsole, Zeit, UI, Scheduler)
-- `drivers/` – VGA/Ports/PCI/Keyboard/Mouse/SB16
+- `drivers/` – VGA/Ports/PCI/Keyboard/Mouse
 - `cpu/` – IDT/ISR/Timer/jmpbuf
 - `stdlibs/` – kleine libc‑Helfer, DB, BMP, Font
 - `programs/` – Demos/Editor; `programs/dobby/` – Interpreter

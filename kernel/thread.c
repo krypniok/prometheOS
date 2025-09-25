@@ -13,7 +13,7 @@ static void thread_trampoline(void);
 static thread_t threads[MAX_THREADS];
 static int current = 0;
 static int nthreads = 0;
-static int g_sched_mode = 1; // default preemptive
+static int g_sched_mode = 0; // default cooperative (no IRQ preemption)
 
 extern void switch_to(thread_t *t); /* asm helper evtl. */
 
@@ -46,9 +46,10 @@ int thread_create(void (*fn)(void)) {
         threads[id].active = 1;
         threads[id].should_stop = 0;
     } else {
-        // cooperative: setjmp to init, then set return address and stack
+        // cooperative: setjmp to init, then enter via trampoline
         setjmp(&threads[id].ctx);
-        threads[id].ctx.eip=(unsigned int)fn;
+        threads[id].entry = fn;
+        threads[id].ctx.eip=(unsigned int)thread_trampoline;
         threads[id].ctx.esp=(unsigned int)(threads[id].stack+STACK_SIZE-4);
         threads[id].active=1;
         threads[id].should_stop = 0;
@@ -152,12 +153,11 @@ static void worker_b(void){
 }
 
 void thread_test(void){
-    printf("thread_test: init\n");
-    thread_init();
+    printf("thread_test: spawn two workers\n");
     int ta = thread_create(worker_a);
     int tb = thread_create(worker_b);
     if (ta < 0 || tb < 0) { printf("thread_test: create failed\n"); return; }
-    // Preemptive join
+    // Join in both modes; in cooperative mode, yield so workers can run
     thread_join(ta);
     thread_join(tb);
     printf("\nthread_test: done\n");
@@ -165,7 +165,10 @@ void thread_test(void){
 
 int thread_join(int thread_id){
     if (thread_id <= 0 || thread_id >= nthreads) return -1;
-    while (threads[thread_id].active) { sleep_us(1000); }
+    while (threads[thread_id].active) {
+        if (!g_sched_mode) { thread_yield(); }
+        else { sleep_us(1000); }
+    }
     return 0;
 }
 

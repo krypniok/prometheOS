@@ -20,6 +20,7 @@
 #include "time.h"
 #include "ui.h"
 #include "rtc.h"
+#include "thread.h"
 
 #define KERNEL_PROMPT_CHAR 0x10
 #define KERNEL_PROMPT_COLOR (FG_RED | BG_BLACK)
@@ -32,6 +33,12 @@ int g_skip_prompt_once = 0;
 bool g_bKernelInitialised = false;
 int g_iKernelRevnum = REVISION_NUMBER;
 unsigned char* g_strKernelRevdate = REVISION_DATE;
+
+// Forward decls used by cooperative console thread
+void kernel_console_execute_command(char* input);
+unsigned int isExtendedKey(unsigned int key);
+int kernel_console_program();
+static void kernel_console_thread(void);
 
 // ---- Command dispatch types and table (global) -----------------------------
 typedef enum { T0, T_OPT_STR, T_STR, T_PTR, T_U32, T_U32_U32, T_U32_U32_STR, T_U32_U32_U32 } CmdType;
@@ -49,7 +56,7 @@ extern void db_autosave_on(void); extern void db_autosave_off(void); extern void
 extern void db_put(uint32_t,uint32_t,const char*); extern void db_get(uint32_t,uint32_t,const char*);
 extern void db_rm(const char*); extern void db_edit(const char*); extern void font(const char*);
 extern void restart(void); extern void dobby(const char*); extern int editor_main(void);
-extern void bgademo(void); extern void sb16demo(void);
+extern void bgademo(void);
 extern void bga_close(void);
 // raw VGA restore without font/console helpers for diagnostics
 extern void vga_diag_txtforce(void);
@@ -63,6 +70,10 @@ extern void cmd_memset(uint32_t,uint32_t); extern void cmd_memcpy(uint32_t,uint3
 extern void searchb(uint32_t,uint32_t,uint32_t);
 extern void beep(uint32_t,uint32_t); extern void beepus(uint32_t,uint32_t); extern void beep_bg(uint32_t,uint32_t); extern void beep_stop(void);
 extern void beep_sequence(uint32_t,uint32_t,uint32_t);
+extern void wav_load(const char*); extern void wav_play_cmd(void); extern void wav_stop_cmd(void);
+extern void pcspk_test(uint32_t,uint32_t);
+extern void pcspk_sweep3(uint32_t,uint32_t,uint32_t);
+extern void pcspk_gliss(uint32_t,uint32_t,uint32_t);
 extern void searchs(uint32_t,uint32_t,const char*); extern void quit_qemu(void);
 extern void palflash(uint32_t); extern void glyphpulse(uint32_t);
 extern void thread_test(void);
@@ -78,6 +89,7 @@ extern void palfade_c1(uint32_t,uint32_t,uint32_t);
 extern void palfade_c2(uint32_t,uint32_t,uint32_t);
 extern void printlogo(void);
 
+extern int txtmode(void);
 extern int ide_main(void);
 
 static const Cmd CMDS[] = {
@@ -115,9 +127,8 @@ static const Cmd CMDS[] = {
     {"dobby",       T_STR,     dobby},
     {"em",          T0,        editor_main},
     {"demo",        T0,        bgademo},
-    {"txtmode",     T0,        bga_close},
+    {"txtmode",     T0,        txtmode},
     {"txtforce",    T0,        vga_diag_txtforce},
-    {"sb16",        T0,        sb16demo},
     {"thread_test", T0,        thread_test},
     {"sched_info",  T0,        sched_info},
     {"sched_timeslice", T_U32, sched_timeslice},
@@ -156,6 +167,12 @@ static const Cmd CMDS[] = {
     {"beep_bg",     T_U32_U32, beep_bg},
     {"beep_stop",   T0,        beep_stop},
     {"beep_sequence",T_U32_U32_U32, beep_sequence},
+    {"pcspk",      T_U32_U32, pcspk_test},
+    {"pcspk_sweep",T_U32_U32_U32, pcspk_sweep3},
+    {"pcspk_gliss",T_U32_U32_U32, pcspk_gliss},
+    {"wav_load",    T_STR,     wav_load},
+    {"wav_play",    T0,        wav_play_cmd},
+    {"wav_stop",    T0,        wav_stop_cmd},
     {"printf",      T_STR,     printf},
     {"searchs",     T_U32_U32_STR, searchs},
     {"quit_qemu",   T0,        quit_qemu},
@@ -197,7 +214,8 @@ void kernel_main() {
         print_string("A20 Line was activated by the MBR.\n");
         // enable_a20_line();
 
-        print_string("Initializing timer millisecond.\n");
+        print_string("Initializing timer 1000 Hz (no preempt).\n");
+        // Keep PIT for time/sleep only; scheduling is cooperative
         init_timer(1000);
 
         print_string("Initializing PS/2 mouse interface.\n");
@@ -228,16 +246,20 @@ void kernel_main() {
     // used by our libc-style allocator (memory[] in stdlibs/memory.c).
     // Any such tests should use a dedicated scratch buffer and stay clear of
     // the BSS region.
-    {
-        unsigned char oldc = get_color();
-        set_color(KERNEL_PROMPT_COLOR);
-        printf("%c", KERNEL_PROMPT_CHAR);
-        set_color(oldc);
-        printf(" ");
-    }
-
-    while(!g_bKernelShouldStop) {
-        kernel_console_program();
+    // Start console as its own cooperative thread; main runs the scheduler
+    thread_init();
+    int console_tid = thread_create(kernel_console_thread);
+    printf("console thread id %d\n", console_tid);
+    if (console_tid < 0) {
+        printf("console thread create failed; fallback to blocking console\n");
+        while(!g_bKernelShouldStop) { kernel_console_program(); }
+    } else {
+        while(!g_bKernelShouldStop) {
+            // simple cooperative scheduler heartbeat
+            thread_yield();
+            // micro idle to reduce CPU but keep >1 kHz responsiveness
+            sleep_us(50);
+        }
     }
 
 end_of_kernel:
@@ -248,6 +270,44 @@ end_of_kernel:
     // which is why execution seemed to continue after HLT.
     asm volatile("cli");
     for(;;){ asm volatile("hlt"); }
+}
+
+// Cooperative console thread using non-blocking key reads
+static void kernel_console_thread(void) {
+    // initial prompt
+    {
+        unsigned char oldc = get_color();
+        set_color(KERNEL_PROMPT_COLOR);
+        printf("%c", KERNEL_PROMPT_CHAR);
+        set_color(oldc);
+        printf(" ");
+    }
+    while (!g_bKernelShouldStop) {
+        unsigned int key = getkey_async();
+        if (!key) { sleep_us(200); thread_yield(); continue; }
+        unsigned int chr = char_from_key(key);
+
+        if (key == SC_BACKSPACE) {
+            if (backspace(kernel_console_key_buffer)) { print_backspace(); }
+        } else if (key == SC_ENTER) {
+            clear_cursor();
+            print_nl();
+            kernel_console_execute_command(kernel_console_key_buffer);
+            kernel_console_key_buffer[0] = '\0';
+        } else if (key == SC_F1 && is_key_pressed(SC_LEFT_CTRL)) {
+            editor_main();
+            printf("%c ", KERNEL_PROMPT_CHAR);
+        } else if ((key == SC_PAGEUP) || (isExtendedKey(key) && ((key & 0xFF) == SC_PAGEUP))) {
+            console_page_up();
+        } else if ((key == SC_PAGEDOWN) || (isExtendedKey(key) && ((key & 0xFF) == SC_PAGEDOWN))) {
+            console_page_down();
+        } else {
+            append(kernel_console_key_buffer, chr);
+            char str[2] = {(char)chr, '\0'};
+            print_string(str);
+        }
+    }
+    thread_exit();
 }
 
 void kernel_console_execute_command(char *input) {
