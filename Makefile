@@ -205,7 +205,6 @@ database-ls: hbdbtool database.hbdb
 database-clean:
 	$(RM) database.hbdb
 
-# --- Git push helper ---
 push:
 	@echo "==> cleaning build artefacts..."
 	$(MAKE) clean
@@ -213,6 +212,6 @@ push:
 	@echo "==> adding changes..."
 	git add .
 	@echo "==> committing..."
-	git commit -m "$(if $(m),$(m),auto-push from make)"
-	@echo "==> pushing..."
-	git push origin main
+	git commit -m "$(if $(m),$(m),auto-push from make)" || echo "==> no changes to commit"
+	@echo "==> force pushing..."
+	git push origin main --force
