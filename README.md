@@ -26,7 +26,7 @@ make database
 make run
 ```
 
-Im Kernel‑Prompt: `db_ls`, `dobby beep.c`, `dobby bgatest.c`, `dobby bga_gradient.c`.
+Im Kernel‑Prompt: `db_ls`, `dobby beep.c`, `dobby bgatest.c`, `dobby bga_gradient.c`, `dobby dobby_thread.c`.
 
 ## Kernel‑Befehle (Auswahl)
 
