@@ -22,6 +22,81 @@
 
 int dobby(const char* filename);
 
+void vt_cmd(uint32_t index);
+
+static char* g_dobby_thread_args[MAX_THREADS];
+
+static void dobby_thread_worker(void) {
+    int tid = thread_current_id();
+    char* filename = NULL;
+    if (tid >= 0 && tid < MAX_THREADS) {
+        // wait until launcher populates our slot
+        while ((filename = g_dobby_thread_args[tid]) == NULL) {
+            sleep_us(500);
+        }
+        g_dobby_thread_args[tid] = NULL;
+    }
+    if (!filename) {
+        printf("[dobby] thread %d missing filename\n", tid);
+        return;
+    }
+
+    printf("[dobby] thread %d running %s\n", tid, filename);
+    int rc = dobby(filename);
+    printf("[dobby] thread %d finished (%d)\n", tid, rc);
+    free(filename);
+}
+
+static int dobby_launch_thread(const char* filename) {
+    if (!filename || !filename[0]) {
+        printf("usage: dobby <name.c>\n");
+        return -1;
+    }
+    size_t len = strlen(filename);
+    if (len >= 240) {
+        printf("dobby: name too long\n");
+        return -1;
+    }
+    char* copy = (char*)malloc(len + 1);
+    if (!copy) {
+        printf("dobby: alloc failed\n");
+        return -1;
+    }
+    memcpy(copy, filename, len + 1);
+
+    int tid = thread_create(dobby_thread_worker);
+    if (tid < 0) {
+        printf("dobby: thread create failed\n");
+        free(copy);
+        return -1;
+    }
+    if (tid >= MAX_THREADS) {
+        printf("dobby: invalid thread id\n");
+        free(copy);
+        return -1;
+    }
+
+    g_dobby_thread_args[tid] = copy;
+    printf("[dobby] spawned thread %d for %s\n", tid, filename);
+    return tid;
+}
+
+void dobby_cmd(const char* filename) {
+    int tid = dobby_launch_thread(filename);
+    if (tid >= 0) {
+        // give the interpreter a chance to start before returning to console
+        thread_yield();
+    }
+}
+
+void vt_cmd(uint32_t index) {
+    if (index == 0 || index > 12) {
+        printf("vt: use 1..12\n");
+        return;
+    }
+    kernel_request_vt_switch((int)(index - 1));
+}
+
 
 extern bool g_bKernelShouldStop;
 extern jmp_buf g_jmpKernelMain;
@@ -54,6 +129,7 @@ static const help_entry g_help_entries[] = {
     {"db_get <addr> <max> <name>", "Get file to memory"},
     {"db_rm <name>", "Remove file"},
     {"db_edit <name>", "Edit DB text file"},
+    {"vt <n>", "Switch virtual console (1-12)"},
     {"restart", "Restart kernel"},
     {"dobby <name>", "Run Little C from DB"},
     {"em", "Text editor"},
@@ -62,6 +138,7 @@ static const help_entry g_help_entries[] = {
     {"thread_test", "Spawn two demo threads (coop/preempt)"},
     {"tsrtime", "Start clock thread top-right"},
     {"thread_kill <id>", "Signal a thread to stop"},
+    {"taskmgr", "Show running threads"},
     {"heartpulse", "Start pulsing hearts (ASCII code)"},
     {"sched_info", "Show scheduler timeslice and state"},
     {"sched_timeslice <ms>", "Set scheduler timeslice (1..1000 ms)"},
@@ -382,7 +459,7 @@ void db_rm(const char* name){
 // Editor integration: edit a DB text file
 static const char* g_dbedit_name = 0;
 static void _editor_save_to_db(unsigned char* buf, int len){ if (!g_dbedit_name) return; hbdb_fs_put(g_dbedit_name, buf, (size_t)len); }
-static void _editor_run_from_db(void){ if (!g_dbedit_name) return; dobby(g_dbedit_name); }
+static void _editor_run_from_db(void){ if (!g_dbedit_name) return; if (dobby_launch_thread(g_dbedit_name) >= 0) thread_yield(); }
 void db_edit(const char* name){
     g_dbedit_name = name;
     unsigned char* data = 0; size_t sz = 0;

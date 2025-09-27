@@ -13,6 +13,9 @@
 #include "util.h"
 #include "time.h"
 
+__attribute__((weak)) void kernel_request_vt_switch(int index) { (void)index; }
+__attribute__((weak)) void kernel_process_pending_vt(void) { }
+
 
 extern void read_from_disk(unsigned int lba, void* buffer, unsigned int bytes);
 

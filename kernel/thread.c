@@ -1,9 +1,14 @@
 /* thread.c */
+#include <stdbool.h>
+
 #include "thread.h"
 #include "../drivers/display.h"
 #include "../stdlibs/memory.h"
 #include "../stdlibs/string.h"
 #include "../kernel/perf.h"
+
+void kernel_request_shutdown(void) __attribute__((weak));
+void kernel_request_shutdown(void) { }
 
 // Symbol used by IRQ stub to switch stacks on preemptive scheduling
 extern volatile unsigned int g_sched_new_esp;
@@ -175,9 +180,29 @@ int thread_join(int thread_id){
 int thread_kill(int thread_id){
     if (thread_id <= 0 || thread_id >= nthreads) return -1;
     threads[thread_id].should_stop = 1;
+    if (thread_id == 1) {
+        kernel_request_shutdown();
+    }
     return 0;
 }
 
 int thread_should_stop(void){ return threads[current].should_stop ? 1 : 0; }
 
 int thread_current_id(void){ return current; }
+
+int thread_enumerate(thread_info_t* out, int max_entries) {
+    if (!out || max_entries <= 0) return 0;
+    int count = 0;
+    for (int i = 0; i < nthreads && count < max_entries; ++i) {
+        out[count].id = i;
+        out[count].active = threads[i].active;
+        out[count].should_stop = threads[i].should_stop;
+        out[count].entry = threads[i].entry;
+        out[count].frame = threads[i].frame;
+        out[count].stack = threads[i].stack;
+        count++;
+    }
+    return count;
+}
+
+int thread_count(void) { return nthreads; }

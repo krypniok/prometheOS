@@ -26,7 +26,7 @@ make database
 make run
 ```
 
-Im Kernel‑Prompt: `db_ls`, `dobby beep.c`, `dobby bgatest.c`, `dobby bga_gradient.c`.
+Im Kernel‑Prompt: `db_ls`, `dobby beep.c`, `dobby bgatest.c`, `dobby bga_gradient.c`, `dobby dobby_thread.c`.
 
 ## Kernel‑Befehle (Auswahl)
 
@@ -71,6 +71,13 @@ Hinweis Little‑C:
 
 - „semicolon expected“ in Dobby: `;` vergessen oder falsche Kommentarart.
 - Kein Ton: Audio‑Backend von QEMU prüfen (`make test-env`).
+
+## Bekannte Einschränkungen
+
+- RTL8139‑Netzwerktreiber ist Work‑in‑Progress – es werden noch keine Pakete übertragen.
+- SB16‑Emulation reagiert nicht; aktuell nur PC‑Speaker verfügbar.
+- `beep`/DTMF nutzen den PC‑Speaker kooperativ, daher klingt ein Dauerton hörbar abgehackt.
+- Dialogfenster (`editor`, `taskmgr`) nutzen den Textmodus-Renderer und wirken noch unsymmetrisch.
 
 —
 

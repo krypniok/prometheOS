@@ -3,6 +3,9 @@ typedef void (*FunctionPointer)();
 
 static char kernel_console_key_buffer[1024];
 
+void kernel_request_vt_switch(int index);
+void kernel_process_pending_vt(void);
+
 #define ET(x) printf("Error Trace %s\n", #x)
 
 #define KERNEL_PROMPT_UNKNOWN_COMMAND "Unknown command:"

@@ -340,6 +340,7 @@ typedef int  (*fn_i7_t)(int,int,int,int,int,int,int); typedef void (*fn_v7_t)(in
 #include "../../drivers/keyboard.h"
 // Unified time API
 #include "../../kernel/time.h"
+#include "../../kernel/thread.h"
 
 typedef struct { const char* name; const char* args; char ret; void* fn; } kentry_t;
 // Small console helper to print a single character (kernel-side)
@@ -367,6 +368,14 @@ static const kentry_t KFN[] = {
   { "bga_height",  "",   'i', (void*)(fn_i0_t)bga_height },
   // Text mode force (map to robust bga_close)
   { "txtmode",     "",   'v', (void*)(fn_v0_t)txtmode },
+  // Thread helpers
+  { "thread_yield",       "",  'v', (void*)(fn_v0_t)thread_yield },
+  { "thread_exit",        "",  'v', (void*)(fn_v0_t)thread_exit },
+  { "thread_current_id",  "",  'i', (void*)(fn_i0_t)thread_current_id },
+  { "thread_count",       "",  'i', (void*)(fn_i0_t)thread_count },
+  { "thread_should_stop", "",  'i', (void*)(fn_i0_t)thread_should_stop },
+  { "thread_kill",        "i", 'i', (void*)(fn_i1_t)thread_kill },
+  { "thread_join",        "i", 'i', (void*)(fn_i1_t)thread_join },
   { 0, 0, 0, 0 }
 };
 

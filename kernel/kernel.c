@@ -1,3 +1,5 @@
+#include <stddef.h>
+
 #include "../cpu/idt.h"
 #include "../cpu/isr.h"
 #include "../cpu/timer.h"
@@ -7,15 +9,18 @@
 #include "../drivers/ports.h"
 #include "../drivers/video.h"
 #include "../drivers/hdd.h"
+#include "../drivers/net.h"
 #include "../stdlibs/string.h"
 #include "../stdlibs/file.h"
 #include "../stdlibs/tsqlfs.h"
 #include "../stdlibs/homebrewdb.h"
+#include "../stdlibs/memory.h"
 #include "../programs/editor.h"
 #include "../cpu/jmpbuf.h"
 #include "../cpu/cpuinfo.h"
 
 #include "kernel.h"
+#include "bga_video.h"
 #include "util.h"
 #include "time.h"
 #include "ui.h"
@@ -34,11 +39,173 @@ bool g_bKernelInitialised = false;
 int g_iKernelRevnum = REVISION_NUMBER;
 unsigned char* g_strKernelRevdate = REVISION_DATE;
 
+#define VT_COUNT 12
+
+typedef struct {
+    uint16_t   text_cells[80 * 25];
+    char       input_buffer[sizeof(kernel_console_key_buffer)];
+    int        cursor;
+    unsigned char color;
+    int        skip_prompt_once;
+    bool       has_text_snapshot;
+    bool       is_bga;
+    int        bga_w;
+    int        bga_h;
+    uint32_t*  bga_frame;
+    size_t     bga_frame_bytes;
+    bool       initialized;
+} vt_context_t;
+
+static vt_context_t g_vts[VT_COUNT];
+static int g_active_vt = 0;
+static volatile int g_pending_vt = -1;
+
+static void vt_save_current(void);
+static void vt_activate(int index);
+
 // Forward decls used by cooperative console thread
 void kernel_console_execute_command(char* input);
 unsigned int isExtendedKey(unsigned int key);
 int kernel_console_program();
 static void kernel_console_thread(void);
+
+void kernel_request_shutdown(void) {
+    g_bKernelShouldStop = true;
+}
+
+void kernel_request_vt_switch(int index) {
+    if (index < 0 || index >= VT_COUNT) {
+        return;
+    }
+    if (index == g_active_vt) {
+        return;
+    }
+    g_pending_vt = index;
+}
+
+static void vt_save_current(void) {
+    vt_context_t* ctx = &g_vts[g_active_vt];
+    if (!ctx->initialized) {
+        memset(ctx, 0, sizeof(*ctx));
+        ctx->initialized = true;
+    }
+
+    ctx->skip_prompt_once = g_skip_prompt_once;
+
+    if (bga_is_active()) {
+        int w = bga_width();
+        int h = bga_height();
+        size_t need = (size_t)w * (size_t)h * sizeof(uint32_t);
+
+        if (need > 0) {
+            if (!ctx->bga_frame || ctx->bga_frame_bytes != need) {
+                uint32_t* newbuf = (uint32_t*)realloc(ctx->bga_frame, need);
+                if (!newbuf) {
+                    if (ctx->bga_frame) {
+                        free(ctx->bga_frame);
+                    }
+                    ctx->bga_frame = NULL;
+                    ctx->bga_frame_bytes = 0;
+                } else {
+                    ctx->bga_frame = newbuf;
+                    ctx->bga_frame_bytes = need;
+                }
+            }
+            if (ctx->bga_frame && bga_snapshot(ctx->bga_frame, ctx->bga_frame_bytes) == 0) {
+                ctx->is_bga = true;
+                ctx->bga_w = w;
+                ctx->bga_h = h;
+            } else {
+                ctx->is_bga = false;
+            }
+        } else {
+            ctx->is_bga = true;
+            ctx->bga_w = w;
+            ctx->bga_h = h;
+            ctx->bga_frame_bytes = 0;
+        }
+
+        bga_close();
+    } else {
+        uint16_t* shadow = console_get_shadow();
+        memcpy(ctx->text_cells, shadow, sizeof(ctx->text_cells));
+        ctx->cursor = get_cursor();
+        ctx->color = get_color(0);
+        memcpy(ctx->input_buffer, kernel_console_key_buffer, sizeof(ctx->input_buffer));
+        ctx->input_buffer[sizeof(ctx->input_buffer) - 1] = '\0';
+        ctx->has_text_snapshot = true;
+        ctx->is_bga = false;
+    }
+}
+
+static void vt_activate(int index) {
+    vt_context_t* ctx = &g_vts[index];
+
+    if (!ctx->initialized) {
+        memset(ctx, 0, sizeof(*ctx));
+        ctx->initialized = true;
+        ctx->color = get_color(0);
+        ctx->skip_prompt_once = 0;
+    }
+
+    g_active_vt = index;
+    g_skip_prompt_once = ctx->skip_prompt_once;
+
+    if (ctx->is_bga && ctx->bga_frame && ctx->bga_frame_bytes) {
+        if (bga_restore_from_snapshot(ctx->bga_w, ctx->bga_h, ctx->bga_frame, ctx->bga_frame_bytes) == 0) {
+            return;
+        }
+        ctx->is_bga = false;
+    }
+
+    if (bga_is_active()) {
+        bga_close();
+    }
+
+    console_page_end();
+
+    if (ctx->has_text_snapshot) {
+        uint16_t* shadow = console_get_shadow();
+        console_begin_batch();
+        memcpy(shadow, ctx->text_cells, sizeof(ctx->text_cells));
+        console_end_batch();
+        console_flush_to_vga();
+        set_color(ctx->color);
+        set_cursor(ctx->cursor);
+        memcpy(kernel_console_key_buffer, ctx->input_buffer, sizeof(ctx->input_buffer));
+        kernel_console_key_buffer[sizeof(ctx->input_buffer) - 1] = '\0';
+        ctx->is_bga = false;
+    } else {
+        clear_screen();
+        unsigned char oldc = get_color(0);
+        set_color(KERNEL_PROMPT_COLOR);
+        printf("%c", KERNEL_PROMPT_CHAR);
+        set_color(oldc);
+        printf(" ");
+        console_flush_to_vga();
+        ctx->cursor = get_cursor();
+        ctx->color = get_color(0);
+        ctx->input_buffer[0] = '\0';
+        ctx->has_text_snapshot = true;
+        uint16_t* shadow = console_get_shadow();
+        memcpy(ctx->text_cells, shadow, sizeof(ctx->text_cells));
+        ctx->is_bga = false;
+    }
+}
+
+void kernel_process_pending_vt(void) {
+    int target = g_pending_vt;
+    if (target < 0 || target >= VT_COUNT) {
+        return;
+    }
+    if (target == g_active_vt) {
+        g_pending_vt = -1;
+        return;
+    }
+    g_pending_vt = -1;
+    vt_save_current();
+    vt_activate(target);
+}
 
 // ---- Command dispatch types and table (global) -----------------------------
 typedef enum { T0, T_OPT_STR, T_STR, T_PTR, T_U32, T_U32_U32, T_U32_U32_STR, T_U32_U32_U32 } CmdType;
@@ -54,8 +221,8 @@ extern int ramdisk_test(void); extern int ramdisk_saveimg(void); extern int ramd
 extern void db_ls(void); extern void db_cat(const char*); extern void db_saveimg(void); extern void db_loadimg(void);
 extern void db_autosave_on(void); extern void db_autosave_off(void); extern void db_info(void);
 extern void db_put(uint32_t,uint32_t,const char*); extern void db_get(uint32_t,uint32_t,const char*);
-extern void db_rm(const char*); extern void db_edit(const char*); extern void font(const char*);
-extern void restart(void); extern void dobby(const char*); extern int editor_main(void);
+extern void db_rm(const char*); extern void db_edit(const char*); extern void vt_cmd(uint32_t); extern void font(const char*);
+extern void restart(void); extern void dobby_cmd(const char*); extern int editor_main(void);
 extern void bgademo(void);
 extern void bga_close(void);
 // raw VGA restore without font/console helpers for diagnostics
@@ -76,6 +243,12 @@ extern void pcspk_sweep3(uint32_t,uint32_t,uint32_t);
 extern void pcspk_gliss(uint32_t,uint32_t,uint32_t);
 extern void searchs(uint32_t,uint32_t,const char*); extern void quit_qemu(void);
 extern void palflash(uint32_t); extern void glyphpulse(uint32_t);
+extern void net_info(void);
+extern void netcat_cmd(const char*);
+extern void net_ping_cmd(const char*);
+extern void pingtest_cmd(void);
+extern void net_dump_regs(void);
+extern void taskmgr(void);
 extern void thread_test(void);
 extern void sched_info(void);
 extern void sched_timeslice(uint32_t);
@@ -122,9 +295,10 @@ static const Cmd CMDS[] = {
     {"db_get",      T_U32_U32_STR, db_get},
     {"db_rm",       T_STR,     db_rm},
     {"db_edit",     T_STR,     db_edit},
+    {"vt",          T_U32,     vt_cmd},
     {"font",        T_STR,     font},
     {"restart",     T0,        restart},
-    {"dobby",       T_STR,     dobby},
+    {"dobby",       T_STR,     dobby_cmd},
     {"em",          T0,        editor_main},
     {"demo",        T0,        bgademo},
     {"txtmode",     T0,        txtmode},
@@ -177,7 +351,14 @@ static const Cmd CMDS[] = {
     {"searchs",     T_U32_U32_STR, searchs},
     {"quit_qemu",   T0,        quit_qemu},
     {"palflash",    T_U32,     palflash},
-    {"glyphpulse",  T_U32,     glyphpulse}
+    {"glyphpulse",  T_U32,     glyphpulse},
+    {"netinfo",     T0,        net_info},
+    {"taskmgr",     T0,        taskmgr},
+    {"ping",       T_STR,     net_ping_cmd},
+    {"pingtest",    T0,        pingtest_cmd},
+    {"netdump",     T0,        net_dump_regs},
+    {"netcat",      T_STR,     netcat_cmd},
+    {"nc",          T_STR,     netcat_cmd}
 };
 
 
@@ -232,6 +413,11 @@ void kernel_main() {
         print_string("Seeding wall clock from RTC.\n");
         time_init_with_rtc();
 
+        print_string("Initializing RTL8139 network adapter.\n");
+        if (net_init() != 0) {
+            print_string("RTL8139 init failed.\n");
+        }
+
         // Load HomebrewDB from DB_START_LBA (after kernel region) and enable autosave
         hbdb_load_image(16514);
         hbdb_set_image_lba(16514);
@@ -252,10 +438,16 @@ void kernel_main() {
     printf("console thread id %d\n", console_tid);
     if (console_tid < 0) {
         printf("console thread create failed; fallback to blocking console\n");
-        while(!g_bKernelShouldStop) { kernel_console_program(); }
+        while(!g_bKernelShouldStop) {
+            kernel_process_pending_vt();
+            kernel_console_program();
+        }
     } else {
         while(!g_bKernelShouldStop) {
+            kernel_process_pending_vt();
             // simple cooperative scheduler heartbeat
+            net_poll();
+            net_tick();
             thread_yield();
             // micro idle to reduce CPU but keep >1 kHz responsiveness
             sleep_us(50);
@@ -283,6 +475,7 @@ static void kernel_console_thread(void) {
         printf(" ");
     }
     while (!g_bKernelShouldStop) {
+        if (thread_should_stop()) { g_bKernelShouldStop = true; break; }
         unsigned int key = getkey_async();
         if (!key) { sleep_us(200); thread_yield(); continue; }
         unsigned int chr = char_from_key(key);
