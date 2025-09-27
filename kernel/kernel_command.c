@@ -62,6 +62,7 @@ static const help_entry g_help_entries[] = {
     {"thread_test", "Spawn two demo threads (coop/preempt)"},
     {"tsrtime", "Start clock thread top-right"},
     {"thread_kill <id>", "Signal a thread to stop"},
+    {"taskmgr", "Show running threads"},
     {"heartpulse", "Start pulsing hearts (ASCII code)"},
     {"sched_info", "Show scheduler timeslice and state"},
     {"sched_timeslice <ms>", "Set scheduler timeslice (1..1000 ms)"},

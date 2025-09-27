@@ -142,6 +142,7 @@ void init_keyboard();
 bool is_key_pressed(unsigned int scancode);
 unsigned int getkey();
 unsigned int getkey_async();
+unsigned char char_from_key(unsigned int scancode);
 // Utility: human-readable name for scancode (handles extended E0-prefix)
 const char* scancode_name(unsigned int code);
 

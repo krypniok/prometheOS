@@ -7,6 +7,7 @@
 #include "../drivers/ports.h"
 #include "../drivers/video.h"
 #include "../drivers/hdd.h"
+#include "../drivers/net.h"
 #include "../stdlibs/string.h"
 #include "../stdlibs/file.h"
 #include "../stdlibs/tsqlfs.h"
@@ -39,6 +40,10 @@ void kernel_console_execute_command(char* input);
 unsigned int isExtendedKey(unsigned int key);
 int kernel_console_program();
 static void kernel_console_thread(void);
+
+void kernel_request_shutdown(void) {
+    g_bKernelShouldStop = true;
+}
 
 // ---- Command dispatch types and table (global) -----------------------------
 typedef enum { T0, T_OPT_STR, T_STR, T_PTR, T_U32, T_U32_U32, T_U32_U32_STR, T_U32_U32_U32 } CmdType;
@@ -76,6 +81,12 @@ extern void pcspk_sweep3(uint32_t,uint32_t,uint32_t);
 extern void pcspk_gliss(uint32_t,uint32_t,uint32_t);
 extern void searchs(uint32_t,uint32_t,const char*); extern void quit_qemu(void);
 extern void palflash(uint32_t); extern void glyphpulse(uint32_t);
+extern void net_info(void);
+extern void netcat_cmd(const char*);
+extern void net_ping_cmd(const char*);
+extern void pingtest_cmd(void);
+extern void net_dump_regs(void);
+extern void taskmgr(void);
 extern void thread_test(void);
 extern void sched_info(void);
 extern void sched_timeslice(uint32_t);
@@ -177,7 +188,14 @@ static const Cmd CMDS[] = {
     {"searchs",     T_U32_U32_STR, searchs},
     {"quit_qemu",   T0,        quit_qemu},
     {"palflash",    T_U32,     palflash},
-    {"glyphpulse",  T_U32,     glyphpulse}
+    {"glyphpulse",  T_U32,     glyphpulse},
+    {"netinfo",     T0,        net_info},
+    {"taskmgr",     T0,        taskmgr},
+    {"ping",       T_STR,     net_ping_cmd},
+    {"pingtest",    T0,        pingtest_cmd},
+    {"netdump",     T0,        net_dump_regs},
+    {"netcat",      T_STR,     netcat_cmd},
+    {"nc",          T_STR,     netcat_cmd}
 };
 
 
@@ -232,6 +250,11 @@ void kernel_main() {
         print_string("Seeding wall clock from RTC.\n");
         time_init_with_rtc();
 
+        print_string("Initializing RTL8139 network adapter.\n");
+        if (net_init() != 0) {
+            print_string("RTL8139 init failed.\n");
+        }
+
         // Load HomebrewDB from DB_START_LBA (after kernel region) and enable autosave
         hbdb_load_image(16514);
         hbdb_set_image_lba(16514);
@@ -256,6 +279,8 @@ void kernel_main() {
     } else {
         while(!g_bKernelShouldStop) {
             // simple cooperative scheduler heartbeat
+            net_poll();
+            net_tick();
             thread_yield();
             // micro idle to reduce CPU but keep >1 kHz responsiveness
             sleep_us(50);
@@ -283,6 +308,7 @@ static void kernel_console_thread(void) {
         printf(" ");
     }
     while (!g_bKernelShouldStop) {
+        if (thread_should_stop()) { g_bKernelShouldStop = true; break; }
         unsigned int key = getkey_async();
         if (!key) { sleep_us(200); thread_yield(); continue; }
         unsigned int chr = char_from_key(key);

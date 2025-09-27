@@ -7,8 +7,8 @@
 .PHONY: database database-ls database-clean payload-init
 
 # --- Quellen ---
-C_SOURCES = $(wildcard kernel/*.c drivers/*.c cpu/*.c stdlibs/*.c programs/*.c programs/dobby/*.c)
-HEADERS   = $(wildcard kernel/*.h  drivers/*.h cpu/*.h stdlibs/*.h programs/*.h programs/dobby/*.h)
+C_SOURCES = $(wildcard kernel/*.c drivers/*.c cpu/*.c stdlibs/*.c programs/*.c programs/dobby/*.c net/*.c)
+HEADERS   = $(wildcard kernel/*.h  drivers/*.h cpu/*.h stdlibs/*.h programs/*.h programs/dobby/*.h net/*.h)
 
 # --- Default ---
 # Build artifacts only; do not start QEMU unless 'make run'
@@ -21,7 +21,8 @@ NEW_REVISION     := $(shell expr $(CURRENT_REVISION) + 1)
 $(shell echo $(NEW_REVISION) > version.txt)
 
 # Add -DENABLE_DEBUG when building with DEBUG=1
-CFLAGS := -DREVISION_NUMBER=$(NEW_REVISION) -DREVISION_DATE='"$(CURRENT_DATE)"' $(if $(DEBUG),-DENABLE_DEBUG,)
+CFLAGS_BASE := -DREVISION_NUMBER=$(NEW_REVISION) -DREVISION_DATE='"$(CURRENT_DATE)"'
+CFLAGS = $(CFLAGS_BASE) $(if $(DEBUG),-DENABLE_DEBUG,)
 
 # --- Interpreter (LittleC) ---
 LITTLEC_OBJS = programs/dobby/parser.o \
@@ -36,7 +37,8 @@ COMMON_OBJS = boot/kernel_entry.o \
               kernel/conio.o kernel/kernel_command.o kernel/math.o kernel/fpu.o kernel/ui.o \
               kernel/mem.o kernel/time.o kernel/util.o kernel/perf.o kernel/rtc.o \
               drivers/debug.o drivers/display.o drivers/hdd.o drivers/hidden_cmd.o \
-              drivers/keyboard.o drivers/mouse.o drivers/ports.o drivers/video.o drivers/dma.o drivers/pci.o \
+              drivers/keyboard.o drivers/mouse.o drivers/ports.o drivers/video.o drivers/dma.o drivers/pci.o drivers/net.o \
+              net/net.o \
               cpu/idt.o cpu/isr.o cpu/timer.o \
               cpu/cpuinfo.o \
               stdlibs/file.o stdlibs/memory.o stdlibs/stdio.o stdlibs/string.o \
@@ -44,7 +46,7 @@ COMMON_OBJS = boot/kernel_entry.o \
               stdlibs/bmp.o stdlibs/font_psf.o \
               stdlibs/tsqlfs.o \
               programs/editor.o kernel/logo.o \
-              programs/snake.o programs/snaketext.o \
+              programs/snake.o programs/snaketext.o programs/netcat.o programs/pingtest.o programs/taskmgr.o \
               kernel/thread.o \
               $(LITTLEC_OBJS)
 
@@ -53,10 +55,10 @@ COMMON_OBJS_STUB = boot/kernel_entry.o \
               kernel/conio.o kernel/math.o kernel/perf.o kernel/thread.o \
               kernel/mem.o kernel/time.o kernel/util.o kernel/rtc.o \
               drivers/debug.o drivers/display.o drivers/hdd.o drivers/hidden_cmd.o \
-              drivers/keyboard.o drivers/ports.o drivers/video.o drivers/pci.o \
+              drivers/keyboard.o drivers/ports.o drivers/video.o drivers/pci.o drivers/net.o net/net.o \
               cpu/idt.o cpu/isr.o cpu/timer.o \
               stdlibs/file.o stdlibs/memory.o stdlibs/stdio.o stdlibs/string.o \
-              stdlibs/tsqlfs.o stdlibs/homebrewdb.o
+              stdlibs/tsqlfs.o stdlibs/homebrewdb.o programs/netcat.o programs/pingtest.o
 
 # --- Build Kernel Stub + Kernel ---
 kernel_stub.bin: $(COMMON_OBJS_STUB) kernel/kernel_stub.o
@@ -102,8 +104,12 @@ AUDIODEV := -audiodev $(AUDIO_DRV),id=snd
 # Always route both SB16 and PC speaker through the selected audio backend
 SOUND := $(AUDIODEV) -device sb16,audiodev=snd -machine pcspk-audiodev=snd
 
+# --- Netzwerk: emulierte RTL8139 mit user-NAT ---
+NETWORK := -netdev user,id=net0 -device rtl8139,netdev=net0
+
 # --- Lauf-Flags ---
 RUNFLAGS := -m 1024 -rtc base=localtime,clock=host,driftfix=slew -vga std $(CPU32)
+RUNFLAGS += $(NETWORK)
 DEBUGCON := -chardev stdio,id=dbg -device isa-debugcon,iobase=0xe9,chardev=dbg -device isa-debug-exit,iobase=0xf4,iosize=0x04 \
 
 # --- Run: 32MB HDD-Image booten, test.txt injizieren/extrahieren ---
