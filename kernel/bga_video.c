@@ -2,6 +2,7 @@
 #include "../drivers/ports.h"
 #include "bga_video.h"
 #include "../drivers/display.h" // for VGA text console helpers
+#include "../stdlibs/string.h"
 
 #define BGA_IOPORT_INDEX  0x01CE
 #define BGA_IOPORT_DATA   0x01CF
@@ -163,6 +164,27 @@ void bga_close(void){
 int bga_is_active(void){ return g_lfb ? 1 : 0; }
 int bga_width(void){ return g_w; }
 int bga_height(void){ return g_h; }
+
+size_t bga_snapshot_size(void){
+    if (!g_lfb || g_w <= 0 || g_h <= 0) return 0;
+    return (size_t)g_w * (size_t)g_h * sizeof(uint32_t);
+}
+
+int bga_snapshot(void* dest, size_t bytes){
+    size_t need = bga_snapshot_size();
+    if (!need || !dest || bytes < need) return -1;
+    memcpy(dest, (const void*)g_lfb, need);
+    return 0;
+}
+
+int bga_restore_from_snapshot(int w, int h, const void* src, size_t bytes){
+    if (!src || w <= 0 || h <= 0) return -1;
+    size_t need = (size_t)w * (size_t)h * sizeof(uint32_t);
+    if (bytes < need) return -1;
+    if (bga_init(w, h) != 0) return -1;
+    memcpy((void*)g_lfb, src, need);
+    return 0;
+}
 
 static inline void put32(uint32_t addr, uint32_t val){ *(volatile uint32_t*)addr = val; }
 static inline uint32_t lfb_addr(int x,int y){ return g_lfb + (uint32_t)(y*g_w + x)*4u; }

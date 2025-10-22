@@ -194,6 +194,27 @@ static void keyboard_callback(registers_t *regs) {
         key_status[scancode] = true;
     }
 
+    if (!extended_scancode) {
+        bool alt_combo   = (mod_lalt  || mod_ralt);
+        bool shift_combo = (mod_lshift || mod_rshift);
+        bool ctrl_combo  = (mod_lctrl || mod_rctrl);
+        if ((alt_combo && shift_combo) || (ctrl_combo && shift_combo) || (ctrl_combo && alt_combo)) {
+            int target = -1;
+            if (scancode >= SC_F1 && scancode <= SC_F10) {
+                target = (int)(scancode - SC_F1);
+            } else if (scancode == SC_F11) {
+                target = 10;
+            } else if (scancode == SC_F12) {
+                target = 11;
+            }
+            if (target >= 0) {
+                kernel_request_vt_switch(target);
+                extended_scancode = false;
+                return;
+            }
+        }
+    }
+
     // Update modifier state on press
     if (extended_scancode) {
         if (scancode == 0x38) mod_ralt = true;      // RAlt

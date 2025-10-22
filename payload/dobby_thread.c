@@ -1,6 +1,8 @@
 /*
  * Simple Little C demo that exercises the kernel thread helpers exposed to
- * Dobby. Run via "dobby dobby_thread.c" from the kernel prompt.
+ * Dobby. The interpreter now runs inside its own kernel thread, so the script
+ * can cooperate via sleep/stop checks without calling thread_yield() manually.
+ * Run via "dobby dobby_thread.c" from the kernel prompt.
  */
 
 int i;
@@ -28,7 +30,6 @@ main()
         puts("\n");
 
         sleep(200);
-        thread_yield();
 
         if (thread_should_stop()) {
             puts("stop request observed -> leaving loop\n");

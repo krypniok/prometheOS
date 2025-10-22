@@ -1,5 +1,6 @@
 #pragma once
 #include <stdint.h>
+#include <stddef.h>
 
 // BGA (Bochs/QEMU VBE) – minimale 2D‑API, GL1.0‑artig
 // Farbcodierung: 0x00RRGGBB (32‑bpp)
@@ -26,6 +27,11 @@ void bga_blit(int dx, int dy, int dw, int dh, const uint32_t* tex, int tw, int t
 int  bga_is_active(void);
 int  bga_width(void);
 int  bga_height(void);
+
+// Snapshot helpers: capture or restore raw LFB contents
+size_t bga_snapshot_size(void);
+int  bga_snapshot(void* dest, size_t bytes);
+int  bga_restore_from_snapshot(int w, int h, const void* src, size_t bytes);
 
 // Public helper: force VGA 80x25 text mode restore (safe even if BGA inactive)
 int txtmode(void);

@@ -49,5 +49,6 @@ void beep_start_bg(int freq, int ms);        // Beep asynchron
 int  loadWAV(const char* name);              // returns 1 on success
 void playWAV(void);                          // start playback of last loaded WAV
 void stopWAV(void);                          // stop playback
+int  playWAV_sb16(void);                     // SB16 playback (returns 1 on success)
 
 #endif // BEEP_H

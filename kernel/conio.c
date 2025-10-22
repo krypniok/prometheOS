@@ -1,4 +1,5 @@
 #include "../drivers/ports.h"
+#include "../drivers/sb16.h"
 #include "../cpu/timer.h"
 #include "perf.h"
 #include "conio.h"
@@ -390,4 +391,22 @@ void playWAV(void){
 void stopWAV(void){
     g_wav_stop_req = 1; console_sound_off();
     if (g_wav_thread_id >= 0) { thread_join(g_wav_thread_id); g_wav_thread_id = -1; }
+}
+
+int playWAV_sb16(void){
+    if (!g_wav.data || g_wav.length == 0){
+        printf("wav: nothing loaded\n");
+        return 0;
+    }
+    sb16_init();
+    if (!sb16_is_present()){
+        printf("sb16: device not detected\n");
+        return 0;
+    }
+    if (!sb16_play_pcm(g_wav.data, g_wav.length, g_wav.rate, (uint8_t)g_wav.bits, (uint8_t)g_wav.channels)){
+        printf("sb16: playback failed (expect 8-bit mono)\n");
+        return 0;
+    }
+    printf("sb16: playback done (%d bytes @ %d Hz)\n", (int)g_wav.length, (int)g_wav.rate);
+    return 1;
 }
