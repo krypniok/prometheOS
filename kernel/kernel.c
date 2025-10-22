@@ -238,7 +238,7 @@ extern void cmd_memset(uint32_t,uint32_t); extern void cmd_memcpy(uint32_t,uint3
 extern void searchb(uint32_t,uint32_t,uint32_t);
 extern void beep(uint32_t,uint32_t); extern void beepus(uint32_t,uint32_t); extern void beep_bg(uint32_t,uint32_t); extern void beep_stop(void);
 extern void beep_sequence(uint32_t,uint32_t,uint32_t);
-extern void wav_load(const char*); extern void wav_play_cmd(void); extern void wav_stop_cmd(void); extern void wav_play_sb16_cmd(void); extern void sb16_demo(void);
+extern void wav_load(const char*); extern void wav_play_cmd(void); extern void wav_stop_cmd(void); extern void wav_play_sb16_cmd(void); extern void playwave_cmd(const char*); extern void sb16_demo(void);
 extern void pcspk_test(uint32_t,uint32_t);
 extern void pcspk_sweep3(uint32_t,uint32_t,uint32_t);
 extern void pcspk_gliss(uint32_t,uint32_t,uint32_t);
@@ -349,6 +349,7 @@ static const Cmd CMDS[] = {
     {"wav_play",    T0,        wav_play_cmd},
     {"wav_sb16",    T0,        wav_play_sb16_cmd},
     {"wav_stop",    T0,        wav_stop_cmd},
+    {"playwave",    T_STR,     playwave_cmd},
     {"sb16_demo",   T0,        sb16_demo},
     {"printf",      T_STR,     printf},
     {"searchs",     T_U32_U32_STR, searchs},

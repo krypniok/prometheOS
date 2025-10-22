@@ -176,6 +176,7 @@ static const help_entry g_help_entries[] = {
     {"wav_play", "Play loaded WAV via PC speaker"},
     {"wav_sb16", "Play loaded WAV via Sound Blaster 16"},
     {"wav_stop", "Stop WAV playback"},
+    {"playwave <name>", "Load WAV from DB and play via SB16"},
     {"sb16_demo", "Load kasse.wav and play via SB16"},
     {"pcspk <f> <ms>", "Direct PC speaker test"},
     {"pcspk_sweep <f0> <f1> <step> <ms>", "Frequency sweep via PC speaker"},
@@ -350,6 +351,23 @@ void wav_load(const char* name){ if (!loadWAV(name)) printf("wav load failed\n")
 void wav_play_cmd(void){ playWAV(); }
 void wav_stop_cmd(void){ stopWAV(); }
 void wav_play_sb16_cmd(void){ playWAV_sb16(); }
+
+void playwave_cmd(const char* name){
+    if (!name || !name[0]){
+        printf("usage: playwave <file.wav>\n");
+        return;
+    }
+    sb16_init();
+    if (!sb16_is_present()){
+        printf("sb16: device not detected\n");
+        return;
+    }
+    if (!loadWAV(name)){
+        printf("playwave: failed to load %s\n", name);
+        return;
+    }
+    playWAV_sb16();
+}
 
 void sb16_demo(void){
     sb16_init();

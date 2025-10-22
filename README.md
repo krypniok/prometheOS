@@ -56,7 +56,7 @@ Hinweis Little‑C:
 
 - Threads: `kernel/thread.h` (Kurz‑Doku im Header). Kooperatives `thread_yield()`, Präemption per IRQ0.
 - Zeit/Perf: zentrales `kernel/time.h` (sleep, sleep_us, micros, millis). RTC in `kernel/rtc.h`.
-- Audio (PC‑Speaker): `beep`, `beep_sequence`, DTMF‑Helfer (siehe `kernel/conio.h`).
+- Audio: PC‑Speaker (`beep`, `beep_sequence`, DTMF) plus SB16-Wiedergabe. Mit `playwave <file.wav>` lädst du eine WAV aus der HomebrewDB und spielst sie direkt über den emulierten Sound Blaster 16 ab (8‑Bit, Mono, 11025 Hz).
 
 ## Struktur
 
@@ -75,7 +75,7 @@ Hinweis Little‑C:
 ## Bekannte Einschränkungen
 
 - RTL8139‑Netzwerktreiber ist Work‑in‑Progress – es werden noch keine Pakete übertragen.
-- SB16‑Emulation reagiert nicht; aktuell nur PC‑Speaker verfügbar.
+- SB16-Playback unterstützt aktuell nur 8‑Bit-Mono‑Samples bei 11025 Hz (kein Streamen über 64 KiB, keine 16‑Bit/Stereo).
 - `beep`/DTMF nutzen den PC‑Speaker kooperativ, daher klingt ein Dauerton hörbar abgehackt.
 - Dialogfenster (`editor`, `taskmgr`) nutzen den Textmodus-Renderer und wirken noch unsymmetrisch.
 
