@@ -45,9 +45,10 @@ int  dtmf_is_active(void);                   // Läuft DTMF?
 void dtmf_start_bg(const char* sequence);    // DTMF asynchron
 void beep_start_bg(int freq, int ms);        // Beep asynchron
 
-// WAV loader/player (8-bit mono PCM @ 11025 Hz)
+// WAV loader/player: keeps raw audio for SB16 and produces a PC-speaker fallback buffer
 int  loadWAV(const char* name);              // returns 1 on success
-void playWAV(void);                          // start playback of last loaded WAV
+void playWAV(void);                          // start playback of converted PC-speaker buffer
 void stopWAV(void);                          // stop playback
+int  playWAV_sb16(void);                     // SB16 playback (returns 1 on success)
 
 #endif // BEEP_H

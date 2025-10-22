@@ -37,7 +37,7 @@ COMMON_OBJS = boot/kernel_entry.o \
               kernel/conio.o kernel/kernel_command.o kernel/math.o kernel/fpu.o kernel/ui.o \
               kernel/mem.o kernel/time.o kernel/util.o kernel/perf.o kernel/rtc.o \
               drivers/debug.o drivers/display.o drivers/hdd.o drivers/hidden_cmd.o \
-              drivers/keyboard.o drivers/mouse.o drivers/ports.o drivers/video.o drivers/dma.o drivers/pci.o drivers/net.o \
+              drivers/keyboard.o drivers/mouse.o drivers/ports.o drivers/video.o drivers/dma.o drivers/pci.o drivers/net.o drivers/sb16.o \
               net/net.o \
               cpu/idt.o cpu/isr.o cpu/timer.o \
               cpu/cpuinfo.o \
@@ -55,7 +55,8 @@ COMMON_OBJS_STUB = boot/kernel_entry.o \
               kernel/conio.o kernel/math.o kernel/perf.o kernel/thread.o \
               kernel/mem.o kernel/time.o kernel/util.o kernel/rtc.o \
               drivers/debug.o drivers/display.o drivers/hdd.o drivers/hidden_cmd.o \
-              drivers/keyboard.o drivers/ports.o drivers/video.o drivers/pci.o drivers/net.o net/net.o \
+              drivers/keyboard.o drivers/ports.o drivers/video.o drivers/dma.o drivers/pci.o drivers/net.o drivers/sb16.o \
+              net/net.o \
               cpu/idt.o cpu/isr.o cpu/timer.o \
               stdlibs/file.o stdlibs/memory.o stdlibs/stdio.o stdlibs/string.o \
               stdlibs/tsqlfs.o stdlibs/homebrewdb.o programs/netcat.o programs/pingtest.o

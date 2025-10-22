@@ -10,6 +10,7 @@
 #include "../drivers/video.h"
 #include "../drivers/hdd.h"
 #include "../drivers/net.h"
+#include "../drivers/sb16.h"
 #include "../stdlibs/string.h"
 #include "../stdlibs/file.h"
 #include "../stdlibs/tsqlfs.h"
@@ -237,7 +238,7 @@ extern void cmd_memset(uint32_t,uint32_t); extern void cmd_memcpy(uint32_t,uint3
 extern void searchb(uint32_t,uint32_t,uint32_t);
 extern void beep(uint32_t,uint32_t); extern void beepus(uint32_t,uint32_t); extern void beep_bg(uint32_t,uint32_t); extern void beep_stop(void);
 extern void beep_sequence(uint32_t,uint32_t,uint32_t);
-extern void wav_load(const char*); extern void wav_play_cmd(void); extern void wav_stop_cmd(void);
+extern void wav_load(const char*); extern void wav_play_cmd(void); extern void wav_stop_cmd(void); extern void wav_play_sb16_cmd(void); extern void playwave_cmd(const char*); extern void sb16_demo(void);
 extern void pcspk_test(uint32_t,uint32_t);
 extern void pcspk_sweep3(uint32_t,uint32_t,uint32_t);
 extern void pcspk_gliss(uint32_t,uint32_t,uint32_t);
@@ -346,7 +347,10 @@ static const Cmd CMDS[] = {
     {"pcspk_gliss",T_U32_U32_U32, pcspk_gliss},
     {"wav_load",    T_STR,     wav_load},
     {"wav_play",    T0,        wav_play_cmd},
+    {"wav_sb16",    T0,        wav_play_sb16_cmd},
     {"wav_stop",    T0,        wav_stop_cmd},
+    {"playwave",    T_STR,     playwave_cmd},
+    {"sb16_demo",   T0,        sb16_demo},
     {"printf",      T_STR,     printf},
     {"searchs",     T_U32_U32_STR, searchs},
     {"quit_qemu",   T0,        quit_qemu},
@@ -416,6 +420,14 @@ void kernel_main() {
         print_string("Initializing RTL8139 network adapter.\n");
         if (net_init() != 0) {
             print_string("RTL8139 init failed.\n");
+        }
+
+        print_string("Probing Sound Blaster 16 (0x220).\n");
+        sb16_init();
+        if (sb16_is_present()) {
+            print_string("SB16 detected.\n");
+        } else {
+            print_string("SB16 not detected.\n");
         }
 
         // Load HomebrewDB from DB_START_LBA (after kernel region) and enable autosave
