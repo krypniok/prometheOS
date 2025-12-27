@@ -13,9 +13,8 @@
 #define SB16_DSP_WRITE      (SB16_BASE_PORT + 0x0C)
 #define SB16_DSP_STATUS     (SB16_BASE_PORT + 0x0E)
 
-#define SB16_DMA_CHANNEL_8      1       // 8-bit DMA channel
-#define SB16_DMA_CHANNEL_16     5       // 16-bit DMA channel
-#define SB16_DMA_BUFFER_BYTES   65536   // Fits the DSP length register (count-1 up to 0xFFFF)
+#define SB16_DMA_CHANNEL        1       // 8-bit DMA channel (1 is conventional for SB16)
+#define SB16_DMA_BUFFER_BYTES   65536   // Fits the DSP 16-bit length register (count-1 up to 0xFFFF)
 
 static uint8_t g_sb16_dma_buffer[SB16_DMA_BUFFER_BYTES] __attribute__((aligned(16)));
 static int g_sb16_initialized = 0;
@@ -86,75 +85,42 @@ int sb16_play_pcm(const uint8_t* data,
                   uint8_t channels){
     if (!g_sb16_present) return 0;
     if (!data || length == 0) return 0;
-    if (!sample_rate) sample_rate = 11025;
-    if (!(bits_per_sample == 8 || bits_per_sample == 16)) return 0;
-    if (channels == 0 || channels > 2) return 0;
+    if (bits_per_sample != 8 || channels != 1) return 0; // simple 8-bit mono support for now
 
-    uint32_t frame_bytes = (uint32_t)(bits_per_sample / 8u) * channels;
-    if (frame_bytes == 0) return 0;
+    if (length > SB16_DMA_BUFFER_BYTES) length = SB16_DMA_BUFFER_BYTES;
+    memcpy(g_sb16_dma_buffer, data, length);
+
+    if (length == 0) return 0;
 
     sb16_stop(); // ensure previous playback halted
+
+    uint16_t block_len = (uint16_t)(length - 1);
+    dma_setup(SB16_DMA_CHANNEL, g_sb16_dma_buffer, length);
+
     sb16_set_sample_rate(sample_rate);
     sb16_dsp_write(0xD1); // Speaker on
 
-    const uint8_t* ptr = data;
-    uint32_t remaining = length;
-    int use16 = (bits_per_sample == 16);
-
-    while (remaining > 0){
-        uint32_t chunk = remaining;
-        if (chunk > SB16_DMA_BUFFER_BYTES) chunk = SB16_DMA_BUFFER_BYTES;
-        // ensure we only submit complete frames
-        if (chunk > frame_bytes){
-            uint32_t mod = chunk % frame_bytes;
-            if (mod) chunk -= mod;
-        }
-        if (chunk == 0) chunk = frame_bytes <= remaining ? frame_bytes : remaining;
-        if (use16 && (chunk & 1)) chunk--; // 16-bit DMA uses word counts
-        if (chunk < frame_bytes) {
-            sb16_stop();
-            return 0;
-        }
-
-        memcpy(g_sb16_dma_buffer, ptr, chunk);
-
-        if (use16){
-            dma_setup16(SB16_DMA_CHANNEL_16, g_sb16_dma_buffer, chunk);
-            if (!sb16_dsp_write(0xB0)) { sb16_stop(); return 0; }
-            uint8_t fmt = 0x10; // signed 16-bit
-            if (channels > 1) fmt |= 0x20;
-            sb16_dsp_write(fmt);
-            uint16_t words = (uint16_t)((chunk >> 1) - 1);
-            sb16_dsp_write((uint8_t)(words & 0xFF));
-            sb16_dsp_write((uint8_t)(words >> 8));
-        } else {
-            dma_setup(SB16_DMA_CHANNEL_8, g_sb16_dma_buffer, chunk);
-            if (!sb16_dsp_write(0x14)) { sb16_stop(); return 0; }
-            uint16_t count = (uint16_t)(chunk - 1);
-            sb16_dsp_write((uint8_t)(count & 0xFF));
-            sb16_dsp_write((uint8_t)(count >> 8));
-        }
-
-        g_sb16_playing = 1;
-        uint64_t frames = chunk / frame_bytes;
-        if (frames == 0) frames = 1;
-        uint64_t us = (frames * 1000000ULL) / sample_rate;
-        if (us < 2000ULL) us = 2000ULL;
-        sleep_us(us + 2000ULL); // allow DMA to drain
-        g_sb16_playing = 0;
-
-        ptr += chunk;
-        remaining -= chunk;
+    if (!sb16_dsp_write(0x14)) { // 8-bit single-cycle DMA playback
+        sb16_stop();
+        return 0;
     }
+    sb16_dsp_write((uint8_t)(block_len & 0xFF));
+    sb16_dsp_write((uint8_t)(block_len >> 8));
+
+    g_sb16_playing = 1;
+
+    uint64_t us = ((uint64_t)length * 1000000ULL) / sample_rate;
+    if (us < 2000ULL) us = 2000ULL; // wait at least 2ms
+    sleep_us(us + 2000ULL); // add guard window to ensure DMA completes
 
     sb16_stop();
+    g_sb16_playing = 0;
     return 1;
 }
 
 void sb16_stop(void){
     if (!g_sb16_present) return;
     sb16_dsp_write(0xD0); // Halt 8-bit DMA
-    sb16_dsp_write(0xD5); // Halt 16-bit DMA
     sb16_dsp_write(0xD3); // Speaker off
     g_sb16_playing = 0;
 }
