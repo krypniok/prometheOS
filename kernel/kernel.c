@@ -1,0 +1,633 @@
+#include <stddef.h>
+
+#include "../cpu/idt.h"
+#include "../cpu/isr.h"
+#include "../cpu/timer.h"
+#include "../drivers/display.h"
+#include "../drivers/keyboard.h"
+#include "../drivers/mouse.h"
+#include "../drivers/ports.h"
+#include "../drivers/video.h"
+#include "../drivers/hdd.h"
+#include "../drivers/net.h"
+#include "../drivers/sb16.h"
+#include "../stdlibs/string.h"
+#include "../stdlibs/file.h"
+#include "../stdlibs/tsqlfs.h"
+#include "../stdlibs/homebrewdb.h"
+#include "../stdlibs/memory.h"
+#include "../programs/editor.h"
+#include "../cpu/jmpbuf.h"
+#include "../cpu/cpuinfo.h"
+
+#include "kernel.h"
+#include "bga_video.h"
+#include "util.h"
+#include "time.h"
+#include "ui.h"
+#include "rtc.h"
+#include "thread.h"
+
+#define KERNEL_PROMPT_CHAR 0x10
+#define KERNEL_PROMPT_COLOR (FG_RED | BG_BLACK)
+
+jmp_buf g_jmpKernelMain;
+
+bool g_bKernelShouldStop = false;
+// When a command prints its own prompt (e.g., demo), skip the default prompt once
+int g_skip_prompt_once = 0;
+bool g_bKernelInitialised = false;
+int g_iKernelRevnum = REVISION_NUMBER;
+unsigned char* g_strKernelRevdate = REVISION_DATE;
+
+#define VT_COUNT 12
+
+typedef struct {
+    uint16_t   text_cells[80 * 25];
+    char       input_buffer[sizeof(kernel_console_key_buffer)];
+    int        cursor;
+    unsigned char color;
+    int        skip_prompt_once;
+    bool       has_text_snapshot;
+    bool       is_bga;
+    int        bga_w;
+    int        bga_h;
+    uint32_t*  bga_frame;
+    size_t     bga_frame_bytes;
+    bool       initialized;
+} vt_context_t;
+
+static vt_context_t g_vts[VT_COUNT];
+static int g_active_vt = 0;
+static volatile int g_pending_vt = -1;
+
+static void vt_save_current(void);
+static void vt_activate(int index);
+
+// Forward decls used by cooperative console thread
+void kernel_console_execute_command(char* input);
+unsigned int isExtendedKey(unsigned int key);
+int kernel_console_program();
+static void kernel_console_thread(void);
+
+void kernel_request_shutdown(void) {
+    g_bKernelShouldStop = true;
+}
+
+void kernel_request_vt_switch(int index) {
+    if (index < 0 || index >= VT_COUNT) {
+        return;
+    }
+    if (index == g_active_vt) {
+        return;
+    }
+    g_pending_vt = index;
+}
+
+static void vt_save_current(void) {
+    vt_context_t* ctx = &g_vts[g_active_vt];
+    if (!ctx->initialized) {
+        memset(ctx, 0, sizeof(*ctx));
+        ctx->initialized = true;
+    }
+
+    ctx->skip_prompt_once = g_skip_prompt_once;
+
+    if (bga_is_active()) {
+        int w = bga_width();
+        int h = bga_height();
+        size_t need = (size_t)w * (size_t)h * sizeof(uint32_t);
+
+        if (need > 0) {
+            if (!ctx->bga_frame || ctx->bga_frame_bytes != need) {
+                uint32_t* newbuf = (uint32_t*)realloc(ctx->bga_frame, need);
+                if (!newbuf) {
+                    if (ctx->bga_frame) {
+                        free(ctx->bga_frame);
+                    }
+                    ctx->bga_frame = NULL;
+                    ctx->bga_frame_bytes = 0;
+                } else {
+                    ctx->bga_frame = newbuf;
+                    ctx->bga_frame_bytes = need;
+                }
+            }
+            if (ctx->bga_frame && bga_snapshot(ctx->bga_frame, ctx->bga_frame_bytes) == 0) {
+                ctx->is_bga = true;
+                ctx->bga_w = w;
+                ctx->bga_h = h;
+            } else {
+                ctx->is_bga = false;
+            }
+        } else {
+            ctx->is_bga = true;
+            ctx->bga_w = w;
+            ctx->bga_h = h;
+            ctx->bga_frame_bytes = 0;
+        }
+
+        bga_close();
+    } else {
+        uint16_t* shadow = console_get_shadow();
+        memcpy(ctx->text_cells, shadow, sizeof(ctx->text_cells));
+        ctx->cursor = get_cursor();
+        ctx->color = get_color(0);
+        memcpy(ctx->input_buffer, kernel_console_key_buffer, sizeof(ctx->input_buffer));
+        ctx->input_buffer[sizeof(ctx->input_buffer) - 1] = '\0';
+        ctx->has_text_snapshot = true;
+        ctx->is_bga = false;
+    }
+}
+
+static void vt_activate(int index) {
+    vt_context_t* ctx = &g_vts[index];
+
+    if (!ctx->initialized) {
+        memset(ctx, 0, sizeof(*ctx));
+        ctx->initialized = true;
+        ctx->color = get_color(0);
+        ctx->skip_prompt_once = 0;
+    }
+
+    g_active_vt = index;
+    g_skip_prompt_once = ctx->skip_prompt_once;
+
+    if (ctx->is_bga && ctx->bga_frame && ctx->bga_frame_bytes) {
+        if (bga_restore_from_snapshot(ctx->bga_w, ctx->bga_h, ctx->bga_frame, ctx->bga_frame_bytes) == 0) {
+            return;
+        }
+        ctx->is_bga = false;
+    }
+
+    if (bga_is_active()) {
+        bga_close();
+    }
+
+    console_page_end();
+
+    if (ctx->has_text_snapshot) {
+        uint16_t* shadow = console_get_shadow();
+        console_begin_batch();
+        memcpy(shadow, ctx->text_cells, sizeof(ctx->text_cells));
+        console_end_batch();
+        console_flush_to_vga();
+        set_color(ctx->color);
+        set_cursor(ctx->cursor);
+        memcpy(kernel_console_key_buffer, ctx->input_buffer, sizeof(ctx->input_buffer));
+        kernel_console_key_buffer[sizeof(ctx->input_buffer) - 1] = '\0';
+        ctx->is_bga = false;
+    } else {
+        clear_screen();
+        unsigned char oldc = get_color(0);
+        set_color(KERNEL_PROMPT_COLOR);
+        printf("%c", KERNEL_PROMPT_CHAR);
+        set_color(oldc);
+        printf(" ");
+        console_flush_to_vga();
+        ctx->cursor = get_cursor();
+        ctx->color = get_color(0);
+        ctx->input_buffer[0] = '\0';
+        ctx->has_text_snapshot = true;
+        uint16_t* shadow = console_get_shadow();
+        memcpy(ctx->text_cells, shadow, sizeof(ctx->text_cells));
+        ctx->is_bga = false;
+    }
+}
+
+void kernel_process_pending_vt(void) {
+    int target = g_pending_vt;
+    if (target < 0 || target >= VT_COUNT) {
+        return;
+    }
+    if (target == g_active_vt) {
+        g_pending_vt = -1;
+        return;
+    }
+    g_pending_vt = -1;
+    vt_save_current();
+    vt_activate(target);
+}
+
+// ---- Command dispatch types and table (global) -----------------------------
+typedef enum { T0, T_OPT_STR, T_STR, T_PTR, T_U32, T_U32_U32, T_U32_U32_STR, T_U32_U32_U32 } CmdType;
+typedef struct { const char* name; CmdType type; void* fn; } Cmd;
+
+// Forward declarations for command functions (minimal signatures)
+extern void help(const char*);
+extern void msgbox(void); extern void cpuinfo(void);
+extern int print_select_list_horizontal(void); extern int print_select_list_vertical(void);
+extern void memtest(void); extern void kernel_console_clear(void);
+extern void killtimer(void); extern int bell(void); extern void snaketext(void);
+extern int ramdisk_test(void); extern int ramdisk_saveimg(void); extern int ramdisk_loadimg(void); extern int tsqlfs_test(void);
+extern void db_ls(void); extern void db_cat(const char*); extern void db_saveimg(void); extern void db_loadimg(void);
+extern void db_autosave_on(void); extern void db_autosave_off(void); extern void db_info(void);
+extern void db_put(uint32_t,uint32_t,const char*); extern void db_get(uint32_t,uint32_t,const char*);
+extern void db_rm(const char*); extern void db_edit(const char*); extern void vt_cmd(uint32_t); extern void font(const char*);
+extern void restart(void); extern void dobby_cmd(const char*); extern int editor_main(void);
+extern void bgademo(void);
+extern void bga_close(void);
+// raw VGA restore without font/console helpers for diagnostics
+extern void vga_diag_txtforce(void);
+extern void dtmf(void); extern void dtmf_bg(const char*); extern void dtmf_stop(void); extern void perftest(void);
+extern int setpal(void); extern void snake_main(void); extern void random(void); extern void uptime(void);
+extern void hidecursor(void); extern void showcursor(void); extern void print_registers(void); extern void keycodes(void);
+extern void exit(void); extern void loaddisk(void); extern void printascii(void);
+extern void cat(void*); extern void run(void*);
+extern void cmd_hexdump(uint32_t,uint32_t);
+extern void cmd_memset(uint32_t,uint32_t); extern void cmd_memcpy(uint32_t,uint32_t,uint32_t);
+extern void searchb(uint32_t,uint32_t,uint32_t);
+extern void beep(uint32_t,uint32_t); extern void beepus(uint32_t,uint32_t); extern void beep_bg(uint32_t,uint32_t); extern void beep_stop(void);
+extern void beep_sequence(uint32_t,uint32_t,uint32_t);
+extern void wav_load(const char*); extern void wav_play_cmd(void); extern void wav_stop_cmd(void); extern void wav_play_sb16_cmd(void); extern void playwave_cmd(const char*); extern void sb16_demo(void);
+extern void pcspk_test(uint32_t,uint32_t);
+extern void pcspk_sweep3(uint32_t,uint32_t,uint32_t);
+extern void pcspk_gliss(uint32_t,uint32_t,uint32_t);
+extern void searchs(uint32_t,uint32_t,const char*); extern void quit_qemu(void);
+extern void palflash(uint32_t); extern void glyphpulse(uint32_t);
+extern void net_info(void);
+extern void netcat_cmd(const char*);
+extern void net_ping_cmd(const char*);
+extern void pingtest_cmd(void);
+extern void net_dump_regs(void);
+extern void taskmgr(void);
+extern void thread_test(void);
+extern void sched_info(void);
+extern void sched_timeslice(uint32_t);
+extern void sched_mode(const char*);
+extern void now(void);
+extern void tsrtime(void);
+extern void thread_kill_cmd(uint32_t);
+extern void heartpulse(void);
+extern void heartspin(void);
+extern void palfade_c1(uint32_t,uint32_t,uint32_t);
+extern void palfade_c2(uint32_t,uint32_t,uint32_t);
+extern void printlogo(void);
+
+extern int txtmode(void);
+extern int ide_main(void);
+
+static const Cmd CMDS[] = {
+    {"help",        T_OPT_STR, help},
+    {"msgbox",      T0,        msgbox},
+    {"cpuinfo",     T0,        cpuinfo},
+    {"pl",          T0,        print_select_list_horizontal},
+    {"pv",          T0,        print_select_list_vertical},
+    {"memtest",     T0,        memtest},
+    {"cls",         T0,        kernel_console_clear},
+    {"clear",       T0,        kernel_console_clear},
+    {"clr",         T0,        kernel_console_clear},
+    {"rst",         T0,        kernel_console_clear},
+    {"reset",       T0,        kernel_console_clear},
+    {"killtimer",   T0,        killtimer},
+    {"bell",        T0,        bell},
+    {"snaketext",   T0,        snaketext},
+    {"ramdisk_test",T0,        ramdisk_test},
+    {"ramdisk_saveimg",T0,     ramdisk_saveimg},
+    {"ramdisk_loadimg",T0,     ramdisk_loadimg},
+    {"tsqlfs_test", T0,        tsqlfs_test},
+    {"db_ls",       T0,        db_ls},
+    {"db_cat",      T_STR,     db_cat},
+    {"db_saveimg",  T0,        db_saveimg},
+    {"db_loadimg",  T0,        db_loadimg},
+    {"db_autosave_on", T0,     db_autosave_on},
+    {"db_autosave_off",T0,     db_autosave_off},
+    {"db_info",     T0,        db_info},
+    {"db_put",      T_U32_U32_STR, db_put},
+    {"db_get",      T_U32_U32_STR, db_get},
+    {"db_rm",       T_STR,     db_rm},
+    {"db_edit",     T_STR,     db_edit},
+    {"vt",          T_U32,     vt_cmd},
+    {"font",        T_STR,     font},
+    {"restart",     T0,        restart},
+    {"dobby",       T_STR,     dobby_cmd},
+    {"em",          T0,        editor_main},
+    {"demo",        T0,        bgademo},
+    {"txtmode",     T0,        txtmode},
+    {"txtforce",    T0,        vga_diag_txtforce},
+    {"thread_test", T0,        thread_test},
+    {"sched_info",  T0,        sched_info},
+    {"sched_timeslice", T_U32, sched_timeslice},
+    {"sched_mode",  T_STR,     sched_mode},
+    {"now",         T0,        now},
+    {"tsrtime",     T0,        tsrtime},
+    {"thread_kill", T_U32,     thread_kill_cmd},
+    {"heartpulse",  T0,        heartpulse},
+    {"heartspin",   T0,        heartspin},
+    {"palfade_c1",  T_U32_U32_U32, palfade_c1},
+    {"palfade_c2",  T_U32_U32_U32, palfade_c2},
+    {"printlogo",  T0,        printlogo},
+    {"dtmf",        T0,        dtmf},
+    {"dtmf_bg",     T_STR,     dtmf_bg},
+    {"dtmf_stop",   T0,        dtmf_stop},
+    {"perftest",    T0,        perftest},
+    {"setpal",      T0,        setpal},
+    {"snake_main",  T0,        snake_main},
+    {"random",      T0,        random},
+    {"uptime",      T0,        uptime},
+    {"hidecursor",  T0,        hidecursor},
+    {"showcursor",  T0,        showcursor},
+    {"print_registers",T0,     print_registers},
+    {"keycodes",    T0,        keycodes},
+    {"exit",        T0,        exit},
+    {"loaddisk",    T0,        loaddisk},
+    {"printascii",  T0,        printascii},
+    {"cat",         T_PTR,     cat},
+    {"run",         T_PTR,     run},
+    {"hexdump",     T_U32_U32, cmd_hexdump},
+    {"memset",      T_U32_U32, cmd_memset},
+    {"memcpy",      T_U32_U32_U32, cmd_memcpy},
+    {"searchb",     T_U32_U32_U32, searchb},
+    {"beep",        T_U32_U32, beep},
+    {"beepus",      T_U32_U32, beepus},
+    {"beep_bg",     T_U32_U32, beep_bg},
+    {"beep_stop",   T0,        beep_stop},
+    {"beep_sequence",T_U32_U32_U32, beep_sequence},
+    {"pcspk",      T_U32_U32, pcspk_test},
+    {"pcspk_sweep",T_U32_U32_U32, pcspk_sweep3},
+    {"pcspk_gliss",T_U32_U32_U32, pcspk_gliss},
+    {"wav_load",    T_STR,     wav_load},
+    {"wav_play",    T0,        wav_play_cmd},
+    {"wav_sb16",    T0,        wav_play_sb16_cmd},
+    {"wav_stop",    T0,        wav_stop_cmd},
+    {"playwave",    T_STR,     playwave_cmd},
+    {"sb16_demo",   T0,        sb16_demo},
+    {"printf",      T_STR,     printf},
+    {"searchs",     T_U32_U32_STR, searchs},
+    {"quit_qemu",   T0,        quit_qemu},
+    {"palflash",    T_U32,     palflash},
+    {"glyphpulse",  T_U32,     glyphpulse},
+    {"netinfo",     T0,        net_info},
+    {"taskmgr",     T0,        taskmgr},
+    {"ping",       T_STR,     net_ping_cmd},
+    {"pingtest",    T0,        pingtest_cmd},
+    {"netdump",     T0,        net_dump_regs},
+    {"netcat",      T_STR,     netcat_cmd},
+    {"nc",          T_STR,     netcat_cmd}
+};
+
+
+int kernel_console_program();
+
+#include "../cpu/jmpbuf.h"
+jmp_buf kernel_env;
+
+#define REVISION_NAME "PrometheOS"
+
+void kernel_main() {
+    setjmp(&kernel_env);
+	g_jmpKernelMain =  kernel_env;
+    set_color(WHITE_ON_BLACK);
+    clear_screen();
+    printf("start_kernel @ 0x%p\n", &kernel_main);
+    debug_puts("start_kernel via port 0xe9\n");
+
+	unsigned char str[80];
+    sprintf(str, "%s 0.%d (%s)\n", REVISION_NAME, (void*)g_iKernelRevnum, (void*)g_strKernelRevdate);
+    printf(str);
+
+    if(! g_bKernelInitialised) {
+        print_string("Installing interrupt service routines (ISRs).\n");
+        isr_install();
+        print_string("Enabling external interrupts.\n");
+        asm volatile("sti");
+        print_string("Initializing keyboard (IRQ 1).\n");
+        init_keyboard();
+        print_string("Initializing memory managment.\n");
+        init_memory();
+        init_dynamic_mem();
+
+        print_string("A20 Line was activated by the MBR.\n");
+        // enable_a20_line();
+
+        print_string("Initializing timer 1000 Hz (no preempt).\n");
+        // Keep PIT for time/sleep only; scheduling is cooperative
+        init_timer(1000);
+
+        print_string("Initializing PS/2 mouse interface.\n");
+        mouse_install();
+
+        print_string("Initializing random number generator.\n");;
+        init_random();
+
+        print_string("Initializing FPU.\n");;
+        fpu_init();
+
+        print_string("Initializing Perfomance Counter.\n");;
+		perf_init();
+        print_string("Seeding wall clock from RTC.\n");
+        time_init_with_rtc();
+
+        print_string("Initializing RTL8139 network adapter.\n");
+        if (net_init() != 0) {
+            print_string("RTL8139 init failed.\n");
+        }
+
+        print_string("Probing Sound Blaster 16 (0x220).\n");
+        sb16_init();
+        if (sb16_is_present()) {
+            print_string("SB16 detected.\n");
+        } else {
+            print_string("SB16 not detected.\n");
+        }
+
+        // Load HomebrewDB from DB_START_LBA (after kernel region) and enable autosave
+        hbdb_load_image(16514);
+        hbdb_set_image_lba(16514);
+        hbdb_set_autosave(1);
+
+		g_bKernelInitialised = true;
+    }
+
+    kernel_console_key_buffer[0] = '\0';
+
+    // Do not bulk-read the disk into low memory here: it corrupts the heap
+    // used by our libc-style allocator (memory[] in stdlibs/memory.c).
+    // Any such tests should use a dedicated scratch buffer and stay clear of
+    // the BSS region.
+    // Start console as its own cooperative thread; main runs the scheduler
+    thread_init();
+    int console_tid = thread_create(kernel_console_thread);
+    printf("console thread id %d\n", console_tid);
+    if (console_tid < 0) {
+        printf("console thread create failed; fallback to blocking console\n");
+        while(!g_bKernelShouldStop) {
+            kernel_process_pending_vt();
+            kernel_console_program();
+        }
+    } else {
+        while(!g_bKernelShouldStop) {
+            kernel_process_pending_vt();
+            // simple cooperative scheduler heartbeat
+            net_poll();
+            net_tick();
+            thread_yield();
+            // micro idle to reduce CPU but keep >1 kHz responsiveness
+            sleep_us(50);
+        }
+    }
+
+end_of_kernel:
+    print_nl();
+    printf("Wow, we should get here...\nExiting...\nStopping the CPU...\n");
+    // Fully stop CPU: disable interrupts, then halt forever.
+    // With IF=1, HLT only sleeps until the next interrupt (PIT/keyboard),
+    // which is why execution seemed to continue after HLT.
+    asm volatile("cli");
+    for(;;){ asm volatile("hlt"); }
+}
+
+// Cooperative console thread using non-blocking key reads
+static void kernel_console_thread(void) {
+    // initial prompt
+    {
+        unsigned char oldc = get_color();
+        set_color(KERNEL_PROMPT_COLOR);
+        printf("%c", KERNEL_PROMPT_CHAR);
+        set_color(oldc);
+        printf(" ");
+    }
+    while (!g_bKernelShouldStop) {
+        if (thread_should_stop()) { g_bKernelShouldStop = true; break; }
+        unsigned int key = getkey_async();
+        if (!key) { sleep_us(200); thread_yield(); continue; }
+        unsigned int chr = char_from_key(key);
+
+        if (key == SC_BACKSPACE) {
+            if (backspace(kernel_console_key_buffer)) { print_backspace(); }
+        } else if (key == SC_ENTER) {
+            clear_cursor();
+            print_nl();
+            kernel_console_execute_command(kernel_console_key_buffer);
+            kernel_console_key_buffer[0] = '\0';
+        } else if (key == SC_F1 && is_key_pressed(SC_LEFT_CTRL)) {
+            editor_main();
+            printf("%c ", KERNEL_PROMPT_CHAR);
+        } else if ((key == SC_PAGEUP) || (isExtendedKey(key) && ((key & 0xFF) == SC_PAGEUP))) {
+            console_page_up();
+        } else if ((key == SC_PAGEDOWN) || (isExtendedKey(key) && ((key & 0xFF) == SC_PAGEDOWN))) {
+            console_page_down();
+        } else {
+            append(kernel_console_key_buffer, chr);
+            char str[2] = {(char)chr, '\0'};
+            print_string(str);
+        }
+    }
+    thread_exit();
+}
+
+void kernel_console_execute_command(char *input) {
+    int cursor = get_cursor();
+    if (strcmp(input, "") == 0) { goto none; }
+
+    // --- Table based dispatcher --- (see global CMDS[] above)
+
+    // Parse command and args
+    // Quote-aware tokenizer for string arguments
+    auto char* next_token(char** pp){
+        char* s = *pp; if (!s) return 0;
+        while (*s==' ') s++;
+        if (!*s){ *pp = s; return 0; }
+        char* start = s;
+        char q = 0;
+        if (*s=='"' || *s=='\'') { q = *s; s++; start = s; }
+        char* out = start;
+        if (q){
+            while (*s){
+                if (*s=='\\' && s[1]){ s++; *out++ = *s++; continue; }
+                if (*s==q){ s++; break; }
+                *out++ = *s++;
+            }
+        } else {
+            while (*s && *s!=' ') { *out++ = *s++; }
+        }
+        *out = '\0';
+        while (*s==' ') s++;
+        *pp = s;
+        return start;
+    }
+    // Simple numeric parser that does not modify the buffer
+    auto int parse_u32(char** pp, uint32_t* out){
+        char* s = *pp; if (!s) return 0; while (*s==' ') s++; if (!*s) { *pp = s; return 0; }
+        // refuse quoted for numeric; let user quote only for strings
+        if (*s=='"' || *s=='\'') return 0;
+        char* end = 0; unsigned long v = strtoul(s, &end, 0);
+        if (end == s) return 0; // no digits
+        *out = (uint32_t)v;
+        while (*end==' ') end++;
+        *pp = end; return 1;
+    }
+    char* p = input;
+    while (*p==' ') p++;
+    char cmd[32]; int ci=0; while (*p && *p!=' ' && ci< (int)sizeof(cmd)-1) cmd[ci++]=*p++;
+    cmd[ci]='\0';
+    while (*p==' ') p++;
+
+    int handled = 0;
+    for (unsigned int i=0;i<sizeof(CMDS)/sizeof(CMDS[0]);i++){
+        if (strcmp(cmd, CMDS[i].name)==0){
+            handled = 1;
+            switch (CMDS[i].type){
+                case T0: ((void(*)(void))CMDS[i].fn)(); break;
+                case T_OPT_STR: { const char* s = (*p)? next_token(&p) : ""; ((void(*)(const char*))CMDS[i].fn)(s ? s : ""); } break;
+                case T_STR: { char* a = next_token(&p); if(!a){ printf("Invalid parameters for %s\n", CMDS[i].name); help(CMDS[i].name); break; } ((void(*)(const char*))CMDS[i].fn)(a); } break;
+                case T_U32: { uint32_t v; if(!parse_u32(&p,&v)){ printf("Invalid parameters for %s\n", CMDS[i].name); help(CMDS[i].name); break;} ((void(*)(uint32_t))CMDS[i].fn)(v);} break;
+                case T_PTR: { uint32_t v; if(!parse_u32(&p,&v)){ printf("Invalid parameters for %s\n", CMDS[i].name); help(CMDS[i].name); break;} ((void(*)(void*))CMDS[i].fn)((void*)v); } break;
+                case T_U32_U32: { uint32_t v1,v2; if(!parse_u32(&p,&v1) || !parse_u32(&p,&v2)){ printf("Invalid parameters for %s\n", CMDS[i].name); help(CMDS[i].name); break;} ((void(*)(uint32_t,uint32_t))CMDS[i].fn)(v1,v2);} break;
+                case T_U32_U32_STR: { uint32_t v1,v2; if(!parse_u32(&p,&v1) || !parse_u32(&p,&v2)){ printf("Invalid parameters for %s\n", CMDS[i].name); help(CMDS[i].name); break;} char* c = next_token(&p); if(!c){ printf("Invalid parameters for %s\n", CMDS[i].name); help(CMDS[i].name); break;} ((void(*)(uint32_t,uint32_t,const char*))CMDS[i].fn)(v1,v2,c);} break;
+                case T_U32_U32_U32: { uint32_t v1,v2,v3; if(!parse_u32(&p,&v1) || !parse_u32(&p,&v2) || !parse_u32(&p,&v3)){ printf("Invalid parameters for %s\n", CMDS[i].name); help(CMDS[i].name); break;} ((void(*)(uint32_t,uint32_t,uint32_t))CMDS[i].fn)(v1,v2,v3);} break;
+            }
+            break;
+        }
+    }
+
+    if (!handled){
+        printf("%s ", KERNEL_PROMPT_UNKNOWN_COMMAND, input);
+        printf("%s\n", input);
+    }
+    if (!g_skip_prompt_once) printf("%c ", KERNEL_PROMPT_CHAR);
+    else g_skip_prompt_once = 0;
+    return;
+none:
+    set_cursor(cursor - 156);
+    return;
+}
+
+unsigned int g_isExtendedKey = 0;
+unsigned int isExtendedKey(unsigned int key) {
+    return key >> 8 == 0xE0;
+}
+
+// Console program one
+int kernel_console_program() {
+    while (1) {
+        unsigned int key = getkey();
+        unsigned int chr = char_from_key(key);
+        
+        if (key == SC_BACKSPACE) {
+            if (backspace(kernel_console_key_buffer)) {
+                print_backspace();
+            }
+        } else if (key == SC_ENTER) {
+            clear_cursor();
+            print_nl();
+            kernel_console_execute_command(kernel_console_key_buffer);
+            kernel_console_key_buffer[0] = '\0';
+        } 
+        else if (key == SC_F1 && is_key_pressed(SC_LEFT_CTRL)) {
+            editor_main();
+            printf("%c ", KERNEL_PROMPT_CHAR);
+        }
+        else if ((key == SC_PAGEUP) || (isExtendedKey(key) && ((key & 0xFF) == SC_PAGEUP))) {
+            console_page_up();
+        }
+        else if ((key == SC_PAGEDOWN) || (isExtendedKey(key) && ((key & 0xFF) == SC_PAGEDOWN))) {
+            console_page_down();
+        }
+        else {
+            append(kernel_console_key_buffer, chr);
+            char str[2] = {chr, '\0'};
+            print_string(str);
+        }
+
+    }
+}

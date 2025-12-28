@@ -1,0 +1,29 @@
+[MBR]
+A20+
+Ld...
+[PRELOADER] Started at 0x10000
+[VBE] Detected (written to 0x5000)
+Saving BIOS Font & Text RAM...
+Setting VBE Mode 800x600x32...
+[KERNEL] LFB Address: 0E000000
+[KERNEL] Multitasking initialized
+[SB16] Detected
+[KERNEL] Started successfully
+PrometheOS Kernel v0.1
+Loaded at 0x100000 via PIO-DMA
+------------------------------
+
+simon@prometheos:/> heap
+Unknown command.
+
+simon@prometheos:/> help
+Available commands:
+  cpuid, memsize, vbe, clear, gfx, sleep
+  beep, pong, disk, music, heap, malloc
+
+simon@prometheos:/> malloc
+Unknown command.
+
+simon@prometheos:/> music
+
+simon@prometheos:/> ]
