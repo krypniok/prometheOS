@@ -201,13 +201,8 @@ int loadWAV(const char* name){
     g_wav.raw_frame_bytes = (uint16_t)(((bps + 7) / 8u) * ch);
     if (g_wav.raw_frame_bytes == 0) g_wav.raw_frame_bytes = 1;
     g_wav.playing = 0;
-
-    wav_build_pc_buffer(data, len, ch, bps, rate);
-    if (g_wav.pc_ready){
-        printf("wav: pc speaker fallback prepared (%d bytes @ %d Hz)\n", (int)g_wav.pc_length, (int)g_wav.pc_rate);
-    } else {
-        printf("wav: pc speaker fallback unavailable (format=%d-bit, %d ch @ %d Hz)\n", (int)bps, (int)ch, (int)rate);
-    }
+    
+    // Fallback (PC Speaker) preparation removed as per request.
 
     printf("wav: loaded %s (%d bytes, %d-bit, %d ch, %d Hz)\n", name, (int)len, (int)bps, (int)ch, (int)rate);
     return 1;
@@ -229,22 +224,80 @@ void stopWAV(void){
     if (g_wav_thread_id >= 0) { thread_join(g_wav_thread_id); g_wav_thread_id = -1; }
 }
 
-int playWAV_sb16(void){
-    if (!g_wav.raw_data || g_wav.raw_length == 0){
-        printf("wav: nothing loaded\n");
-        return 0;
+
+
+// SB16 specific playback functions
+static int g_wav_sb16_thread_id = -1;
+static volatile int g_wav_sb16_stop_req = 0;
+
+static void _wav_sb16_thread(void) {
+    if (!sb16_is_present()) {
+        printf("[_wav_sb16_thread] SB16 not detected or initialized.\n");
+        return;
     }
-    sb16_init();
-    if (!sb16_is_present()){
-        printf("sb16: device not detected\n");
-        return 0;
+    if (!g_wav.raw_data || g_wav.raw_length == 0) {
+        printf("[_wav_sb16_thread] No raw WAV data loaded for SB16 playback.\n");
+        return;
     }
-    if (!sb16_play_pcm(g_wav.raw_data, g_wav.raw_length, g_wav.raw_rate, (uint8_t)g_wav.raw_bits, (uint8_t)g_wav.raw_channels)){
-        printf("sb16: playback failed (driver rejected stream)\n");
-        return 0;
+
+    printf("[_wav_sb16_thread] Starting SB16 playback of WAV.\n");
+    
+    // Start playback using the raw buffer
+    sb16_play_buffer(g_wav.raw_data, g_wav.raw_length, g_wav.raw_rate);
+
+    // Wait until playback finishes (IRQ handler will clear the playing flag)
+    uint32_t timeout_safety = 0;
+    while (sb16_is_playing() && !g_wav_sb16_stop_req) {
+        // Busy wait / yield (could be improved with proper thread sleep/event)
+        for(volatile int i=0; i<1000; i++); 
+        
+        // Safety break to prevent infinite hang if IRQ fails
+        if (++timeout_safety > 10000000) { // Ca. 10-20 Sekunden Timeout je nach CPU
+            printf("[_wav_sb16_thread] Timeout: SB16 IRQ did not fire.\n");
+            sb16_stop();
+            break;
+        }
     }
-    int frames = g_wav.raw_frame_bytes ? (int)(g_wav.raw_length / g_wav.raw_frame_bytes) : (int)g_wav.raw_length;
-    printf("sb16: playback done (%d frames @ %d Hz, %d-bit, %d ch)\n",
-           frames, (int)g_wav.raw_rate, (int)g_wav.raw_bits, (int)g_wav.raw_channels);
-    return 1;
+    
+    if (g_wav_sb16_stop_req) {
+        sb16_stop();
+    }
+    
+    printf("[_wav_sb16_thread] SB16 playback finished.\n");
+}
+
+
+void wav_play_sb16_internal(const char* name) {
+    if (!sb16_is_present()) {
+        printf("SB16 not detected or initialized.\n");
+        return;
+    }
+    printf("wav_play_sb16_internal: Loading WAV '%s'...\n", name);
+    if (!loadWAV(name)) {
+        printf("wav_play_sb16_internal: Failed to load WAV '%s'.\n", name);
+        return;
+    }
+
+    if (g_wav_sb16_thread_id >= 0) {
+        // Stop any existing SB16 playback thread
+        g_wav_sb16_stop_req = 1;
+        thread_join(g_wav_sb16_thread_id);
+        g_wav_sb16_thread_id = -1;
+        g_wav_sb16_stop_req = 0;
+    }
+
+    g_wav_sb16_thread_id = thread_create(_wav_sb16_thread);
+    printf("wav_play_sb16_internal: SB16 playback thread %d spawned.\n", g_wav_sb16_thread_id);
+}
+
+void wav_play_sb16_cmd(void) {
+    wav_play_sb16_internal("kasse.wav"); // Use "kasse.wav" as per help string
+}
+
+void playwave_cmd(const char* name) {
+    wav_play_sb16_internal(name);
+}
+
+void sb16_demo(void) {
+    wav_play_sb16_internal("kasse.wav"); // Same as wav_play_sb16_cmd for now
 }

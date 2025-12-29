@@ -553,7 +553,9 @@ void printf(const char *format, ...)
     char buffer[512];
     vsprintf_internal(buffer, format, args);
     va_end(args);
+    // Print to both screen and serial debug port
     print_string(buffer);
+    debug_puts(buffer);
     g_CursorShow = 1;
 }
 

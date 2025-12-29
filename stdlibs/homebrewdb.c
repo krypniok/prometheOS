@@ -561,18 +561,17 @@ int hbdb_save_image(unsigned int lba_start) {
     unsigned int padded = (total + 511u) & ~511u;
     unsigned char* tmp=(unsigned char*)calloc(padded,1); if(!tmp){ free(buf); return -3; }
     unsigned int magic = 0x48424431; memcpy(tmp,&magic,4); memcpy(tmp+4,&len,4); memcpy(tmp+8,buf,len);
-    // Prefer DMA write, fall back to fast PIO on error
-    int dr = dma_write(lba_start, tmp, padded);
-    if (dr != 0) {
-        const unsigned int chunk_bytes = 128 * 512; // 64 KiB
-        unsigned int written = 0;
-        while (written < padded) {
-            unsigned int n = padded - written;
-            if (n > chunk_bytes) n = chunk_bytes;
-            write_to_disk_fast(lba_start + (written/512), tmp + written, n);
-            written += n;
-        }
+    
+    // Always use PIO write for stability
+    const unsigned int chunk_bytes = 128 * 512; // 64 KiB
+    unsigned int written = 0;
+    while (written < padded) {
+        unsigned int n = padded - written;
+        if (n > chunk_bytes) n = chunk_bytes;
+        write_to_disk_fast(lba_start + (written/512), tmp + written, n);
+        written += n;
     }
+
     free(tmp); free(buf); return 0;
 }
 
@@ -585,17 +584,16 @@ int hbdb_load_image(unsigned int lba_start) {
     if (len + 8 > g_hbdb_max_bytes) { return -3; }
     unsigned int total = len + 8; unsigned int padded = (total + 511u) & ~511u;
     unsigned char* tmp = (unsigned char*)malloc(padded); if (!tmp) return -1;
-    // Prefer DMA for the full payload; fall back to PIO on error
-    int dr = dma_read(lba_start, tmp, padded);
-    if (dr != 0) {
-        const unsigned int chunk_bytes = 128 * 512;
-        unsigned int rd = 0;
-        while (rd < padded){
-            unsigned int n = padded - rd; if (n > chunk_bytes) n = chunk_bytes;
-            read_from_disk_fast(lba_start + (rd/512), tmp + rd, n);
-            rd += n;
-        }
+    
+    // Always use PIO read for stability in VirtualBox
+    const unsigned int chunk_bytes = 128 * 512;
+    unsigned int rd = 0;
+    while (rd < padded){
+        unsigned int n = padded - rd; if (n > chunk_bytes) n = chunk_bytes;
+        read_from_disk_fast(lba_start + (rd/512), tmp + rd, n);
+        rd += n;
     }
+
     int ok = hbdb_deserialize(tmp+8, len); free(tmp); return ok?0:-4;
 }
 

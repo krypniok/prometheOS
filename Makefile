@@ -2,7 +2,7 @@
 # $< = first dependency
 # $^ = all dependencies
 
-.PHONY: all run rerun echo debug clean test-env
+.PHONY: all run rerun run-vbox echo debug clean test-env
 # Database tooling
 .PHONY: database database-ls database-clean payload-init
 
@@ -21,7 +21,7 @@ NEW_REVISION     := $(shell expr $(CURRENT_REVISION) + 1)
 $(shell echo $(NEW_REVISION) > version.txt)
 
 # Add -DENABLE_DEBUG when building with DEBUG=1
-CFLAGS_BASE := -DREVISION_NUMBER=$(NEW_REVISION) -DREVISION_DATE='"$(CURRENT_DATE)"'
+CFLAGS_BASE := -DREVISION_NUMBER=$(NEW_REVISION) -DREVISION_DATE='"$(CURRENT_DATE)"' -DENABLE_DEBUG
 CFLAGS = $(CFLAGS_BASE) $(if $(DEBUG),-DENABLE_DEBUG,)
 
 # --- Interpreter (LittleC) ---
@@ -35,10 +35,9 @@ COMMON_OBJS = boot/kernel_entry.o \
               kernel/bga_video.o \
               cpu/interrupt.o cpu/setjmp.o cpu/longjmp.o \
               kernel/conio.o kernel/kernel_command.o kernel/math.o kernel/fpu.o kernel/ui.o \
-              kernel/mem.o kernel/time.o kernel/util.o kernel/perf.o kernel/rtc.o \
+              kernel/mem.o kernel/time.o kernel/util.o kernel/perf.o kernel/rtc.o kernel/wav.o \
               drivers/debug.o drivers/display.o drivers/hdd.o drivers/hidden_cmd.o \
-              drivers/keyboard.o drivers/mouse.o drivers/ports.o drivers/video.o drivers/dma.o drivers/pci.o drivers/net.o drivers/sb16.o \
-              net/net.o \
+              drivers/keyboard.o drivers/mouse.o drivers/ports.o drivers/video.o drivers/dma.o drivers/pci.o drivers/sb16.o \
               cpu/idt.o cpu/isr.o cpu/timer.o \
               cpu/cpuinfo.o \
               stdlibs/file.o stdlibs/memory.o stdlibs/stdio.o stdlibs/string.o \
@@ -46,7 +45,7 @@ COMMON_OBJS = boot/kernel_entry.o \
               stdlibs/bmp.o stdlibs/font_psf.o \
               stdlibs/tsqlfs.o \
               programs/editor.o kernel/logo.o \
-              programs/snake.o programs/snaketext.o programs/netcat.o programs/pingtest.o programs/taskmgr.o \
+              programs/snake.o programs/snaketext.o programs/taskmgr.o \
               kernel/thread.o \
               $(LITTLEC_OBJS)
 
@@ -70,19 +69,25 @@ kernel.bin: $(COMMON_OBJS) kernel/kernel.o linker.ld
 	@# Enforce max kernel size 8 MiB
 	@test $$(stat -c%s kernel.bin) -le 8388608 || (echo "Kernel exceeds 8 MiB" && false)
 
+# --- Image Layout Konfiguration ---
+SECTOR_MBR    := 0
+SECTOR_STUB   := 2
+SECTOR_KERNEL := 130
+SECTOR_DB     := 16514
+
 # --- Image bauen mit festen Offsets ---
 os-image.bin: boot/mbr.bin kernel_stub.bin kernel.bin
 	# 42MB-Image vorbereiten (genug Platz fuer Kernel + 32MiB DB)
 	# Erforderlich: bis LBA 82049 -> ~40.1MiB, wir runden auf 42MiB (86016 Sektoren)
 	dd if=/dev/zero of=$@ bs=512 count=86016
 	# MBR nach Sektor 0
-	dd if=boot/mbr.bin of=$@ conv=notrunc bs=512 seek=0
+	dd if=boot/mbr.bin of=$@ conv=notrunc bs=512 seek=$(SECTOR_MBR)
 	# Einen Sektor frei lassen (Sektor 1)
 	# Stub ab Sektor 2
-	dd if=kernel_stub.bin of=$@ conv=notrunc bs=512 seek=2
+	dd if=kernel_stub.bin of=$@ conv=notrunc bs=512 seek=$(SECTOR_STUB)
 	# 2 Sektoren Puffer (128–129) bleiben leer (historisch)
 	# Großer Kernel ab Sektor 130 (LBA_KERNEL=130). Maximal 8MiB (16384 Sektoren)
-	dd if=kernel.bin of=$@ conv=notrunc bs=512 seek=130
+	dd if=kernel.bin of=$@ conv=notrunc bs=512 seek=$(SECTOR_KERNEL)
 
 # --- QEMU detect + CPU (32-bit Kernel auf 64-bit QEMU erzwingen) ---
 QEMU32 := $(shell command -v qemu-system-i386 2>/dev/null)
@@ -111,33 +116,75 @@ NETWORK := -netdev user,id=net0 -device rtl8139,netdev=net0
 # --- Lauf-Flags ---
 RUNFLAGS := -m 1024 -rtc base=localtime,clock=host,driftfix=slew -vga std $(CPU32)
 RUNFLAGS += $(NETWORK)
-DEBUGCON := -chardev stdio,id=dbg -device isa-debugcon,iobase=0xe9,chardev=dbg -device isa-debug-exit,iobase=0xf4,iosize=0x04 \
+DEBUGCON := -chardev stdio,id=char_serial0 -device isa-serial,chardev=char_serial0,iobase=0x3F8 -device isa-debug-exit,iobase=0xf4,iosize=0x04
 
 # --- Run: 32MB HDD-Image booten, test.txt injizieren/extrahieren ---
 run: os-image.bin
 	dd if=/dev/zero of=disk_image.img bs=512 count=86016
 	dd if=os-image.bin of=disk_image.img conv=notrunc
 	# Inject HomebrewDB payload hinter Kernel: DB_START_LBA = 130 + 16384 = 16514
-	dd if=database.hbdb of=disk_image.img bs=512 seek=16514 conv=notrunc
+	dd if=database.hbdb of=disk_image.img bs=512 seek=$(SECTOR_DB) conv=notrunc
 	@if [ -z "$(QEMU)" ]; then echo "QEMU fehlt (install qemu-system-x86)"; exit 127; fi
 	$(QEMU) $(RUNFLAGS) $(SOUND) $(DEBUGCON) -drive file=disk_image.img,format=raw,if=ide -boot c
 	# wenn qemu beendet ist: db zurückholen (Host-Datei aktualisieren)
-	dd if=disk_image.img of=database.hbdb bs=512 skip=16514 count=65536 conv=notrunc
+	dd if=disk_image.img of=database.hbdb bs=512 skip=$(SECTOR_DB) count=65536 conv=notrunc
 
 # Optional: DB aus Image holen (schreibt database.hbdb!)
 db_pull: disk_image.img
-	dd if=disk_image.img of=database.hbdb bs=512 skip=16514 count=65536 conv=notrunc
+	dd if=disk_image.img of=database.hbdb bs=512 skip=$(SECTOR_DB) count=65536 conv=notrunc
 
 rerun:
 	@if [ -z "$(QEMU)" ]; then echo "QEMU fehlt (install qemu-system-x86)"; exit 127; fi
 	$(QEMU) $(RUNFLAGS) $(SOUND) $(DEBUGCON) -drive file=disk_image.img,format=raw,if=ide -boot c
 
+# --- VirtualBox ---
+PROMETHEOS_VM_NAME := PrometheOS
+VBOXMANAGE := $(shell command -v VBoxManage 2>/dev/null)
+VBOX_LOG_FILE := $(shell pwd)/prometheos_vbox.log
+
+run-vbox: os-image.bin database
+	@echo "==> Creating final disk image for VirtualBox..."
+	dd if=/dev/zero of=disk_image.img bs=512 count=86016
+	dd if=os-image.bin of=disk_image.img conv=notrunc
+	dd if=database.hbdb of=disk_image.img bs=512 seek=$(SECTOR_DB) conv=notrunc
+	@if [ -z "$(VBOXMANAGE)" ]; then echo "VBoxManage not found. Please install VirtualBox."; exit 1; fi
+
+	@echo "==> Starting aggressive cleanup to prevent UUID errors..."
+	@echo "    Ensuring VM is powered off..."
+	$(VBOXMANAGE) controlvm $(PROMETHEOS_VM_NAME) poweroff >/dev/null 2>&1 || true
+	@echo "    Detaching any old VDI from VM storage..."
+	$(VBOXMANAGE) storageattach $(PROMETHEOS_VM_NAME) --storagectl "IDE Controller" --port 0 --device 0 --type hdd --medium none >/dev/null 2>&1 || true
+	@echo "    Unregistering old VDI from media registry..."
+	$(VBOXMANAGE) closemedium disk "$(shell pwd)/prometheos.vdi" --delete >/dev/null 2>&1 || true
+
+	@echo "==> Converting raw image to VDI..."
+	@rm -f prometheos.vdi
+	@rm -f $(VBOX_LOG_FILE)
+	$(VBOXMANAGE) convertfromraw disk_image.img prometheos.vdi --format VDI
+	@if ! $(VBOXMANAGE) showvminfo $(PROMETHEOS_VM_NAME) >/dev/null 2>&1; then \
+		echo "==> Creating new VirtualBox VM '$(PROMETHEOS_VM_NAME)'..."; \
+		$(VBOXMANAGE) createvm --name $(PROMETHEOS_VM_NAME) --ostype "Other" --register; \
+		$(VBOXMANAGE) modifyvm $(PROMETHEOS_VM_NAME) --memory 1024 --vram 16 --acpi off --ioapic on --chipset ich9; \
+		$(VBOXMANAGE) modifyvm $(PROMETHEOS_VM_NAME) --nic1 nat --nictype1 8139cp; \
+		$(VBOXMANAGE) modifyvm $(PROMETHEOS_VM_NAME) --audio alsa --audiocontroller sb16; \
+		$(VBOXMANAGE) storagectl $(PROMETHEOS_VM_NAME) --name "IDE Controller" --add ide --controller PIIX4; \
+	else \
+		echo "==> Using existing VirtualBox VM '$(PROMETHEOS_VM_NAME)'..."; \
+	fi
+	@echo "==> Configuring serial debug log to $(VBOX_LOG_FILE)..."
+	$(VBOXMANAGE) modifyvm $(PROMETHEOS_VM_NAME) --uart1 0x3F8 4
+	$(VBOXMANAGE) modifyvm $(PROMETHEOS_VM_NAME) --uartmode1 file "$(VBOX_LOG_FILE)"
+	@echo "==> Attaching VDI to VM..."
+	$(VBOXMANAGE) storageattach $(PROMETHEOS_VM_NAME) --storagectl "IDE Controller" --port 0 --device 0 --type hdd --medium prometheos.vdi
+	@echo "==> Starting VM..."
+	$(VBOXMANAGE) startvm $(PROMETHEOS_VM_NAME)
+
 echo: os-image.bin
-	xxd $<
+	xxd $< 
 
 # --- Debug: GDB stub + hilfreiche Logs ---
 kernel.elf: $(COMMON_OBJS) kernel/kernel.o
-	ld -nostdlib -m elf_i386 -o $@ -Ttext 0x100000 $^
+	ld -nostdlib -m elf_i386 -o $@ -Ttext 0x100000 $^ 
 
 debug:
 	@if [ -z "$(QEMU)" ]; then echo "QEMU fehlt (install qemu-system-x86)"; exit 127; fi
@@ -165,7 +212,7 @@ test-env:
 
 # --- Clean ---
 clean:
-	$(RM) *.bin *.o *.dis *.elf
+	$(RM) *.bin *.o *.dis *.elf *.vdi disk_image.img
 	$(RM) kernel/*.o
 	$(RM) boot/*.o boot/*.bin
 	$(RM) drivers/*.o

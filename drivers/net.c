@@ -108,18 +108,23 @@ int net_init(void) {
     if (g_initialized) {
         return 0;
     }
+    debug_puts("[net] net_init start\n");
 
     if (rtl8139_find(&g_pci_bus, &g_pci_slot, &g_pci_func) != 0) {
         printf("[net] Keine RTL8139-Netzwerkkarte gefunden.\n");
+        debug_puts("[net] RTL8139 not found\n");
         return -1;
     }
+    debug_puts("[net] rtl8139_find OK\n");
 
     uint32_t bar0 = pci_config_read_dword(g_pci_bus, g_pci_slot, g_pci_func, 0x10);
     if (!(bar0 & 0x01u)) {
         printf("[net] Erwartete IO-Basisadresse, bekam MMIO (%08x).\n", bar0);
+        debug_puts("[net] BAR0 is not I/O\n");
         return -1;
     }
     g_io_base = (uint16_t)(bar0 & ~0x03u);
+    debug_puts("[net] got I/O base\n");
 
     pci_enable_bus_master(g_pci_bus, g_pci_slot, g_pci_func);
     uint16_t cmd = pci_config_read_word(g_pci_bus, g_pci_slot, g_pci_func, 0x04);
@@ -127,47 +132,59 @@ int net_init(void) {
         cmd |= 0x0001u; // I/O space enable
         pci_config_write_word(g_pci_bus, g_pci_slot, g_pci_func, 0x04, cmd);
     }
+    debug_puts("[net] bus mastering enabled\n");
 
     if (rtl8139_reset(g_io_base) != 0) {
         printf("[net] RTL8139 Reset schlug fehl.\n");
+        debug_puts("[net] reset failed\n");
         return -1;
     }
+    debug_puts("[net] reset OK\n");
 
     for (int i = 0; i < 6; ++i) {
         g_mac[i] = port_byte_in(g_io_base + i);
     }
+    debug_puts("[net] MAC read OK\n");
 
     uint32_t irq_reg = pci_config_read_dword(g_pci_bus, g_pci_slot, g_pci_func, 0x3C);
     g_irq_line = (uint8_t)(irq_reg & 0xFFu);
+    debug_puts("[net] IRQ read OK\n");
 
     memset(g_rx_buffer, 0, sizeof(g_rx_buffer));
     port_long_out(g_io_base + 0x30, (uint32_t)g_rx_buffer);
     g_rx_offset = 0;
     port_word_out(g_io_base + 0x38, (uint16_t)(RTL8139_RX_CAPACITY - 16));
+    debug_puts("[net] RX setup OK\n");
 
     port_word_out(g_io_base + 0x3C, 0x0005); // RxOK, TxOK interrupts
     port_word_out(g_io_base + 0x3E, 0xFFFF); // clear pending
+    debug_puts("[net] IRQ setup OK\n");
 
     port_long_out(g_io_base + 0x44, 0x0000075F); // Receive config: accept broadcast/multicast, wrap
     port_long_out(g_io_base + 0x40, 0x03000700); // Transmit config: DMA burst + threshold
+    debug_puts("[net] RX/TX config OK\n");
 
     g_tx_slot = 0;
     for (int i = 0; i < RTL8139_TX_SLOTS; ++i) {
         memset(g_tx_buffer[i], 0, RTL8139_TX_BUFFER_SIZE);
         port_long_out(g_io_base + 0x20 + (i * 4), (uint32_t)g_tx_buffer[i]);
     }
+    debug_puts("[net] TX setup OK\n");
 
     port_byte_out(g_io_base + 0x37, 0x0C); // Enable Tx + Rx
+    debug_puts("[net] TX/RX enabled\n");
 
     g_initialized = 1;
 
     net_stack_init(g_mac);
+    debug_puts("[net] stack init OK\n");
 
     printf("[net] RTL8139 @0x%X IRQ %d MAC %02X:%02X:%02X:%02X:%02X:%02X initialisiert.\n",
            g_io_base,
            g_irq_line,
            g_mac[0], g_mac[1], g_mac[2], g_mac[3], g_mac[4], g_mac[5]);
 
+    debug_puts("[net] net_init finished\n");
     return 0;
 }
 

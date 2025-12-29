@@ -4,7 +4,9 @@
 #ifdef ENABLE_DEBUG
 void debug_puts(const char* str) {
     while (*str) {
-        port_byte_out(0xe9, (unsigned char)*str++);
+        // Wait for the serial port's transmit buffer to be empty
+        while ((port_byte_in(0x3F8 + 5) & 0x20) == 0);
+        port_byte_out(0x3F8, (unsigned char)*str++);
     }
 }
 

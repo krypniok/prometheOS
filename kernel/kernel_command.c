@@ -174,7 +174,7 @@ static const help_entry g_help_entries[] = {
     {"beep_sequence <f0> <f1> <ms>", "Sweep from f0 to f1 over ms"},
     {"wav_load <name>", "Load 8-bit mono 11025 Hz WAV"},
     {"wav_play", "Play loaded WAV via PC speaker"},
-    {"wav_sb16", "Play loaded WAV via Sound Blaster 16"},
+
     {"wav_stop", "Stop WAV playback"},
     {"playwave <name>", "Load WAV from DB and play via SB16"},
     {"sb16_demo", "Load kasse.wav and play via SB16"},
@@ -350,37 +350,11 @@ void beepus(int freq, int us) { if (us > 0) beep_us(freq, us); }
 void wav_load(const char* name){ if (!loadWAV(name)) printf("wav load failed\n"); }
 void wav_play_cmd(void){ playWAV(); }
 void wav_stop_cmd(void){ stopWAV(); }
-void wav_play_sb16_cmd(void){ playWAV_sb16(); }
 
-void playwave_cmd(const char* name){
-    if (!name || !name[0]){
-        printf("usage: playwave <file.wav>\n");
-        return;
-    }
-    sb16_init();
-    if (!sb16_is_present()){
-        printf("sb16: device not detected\n");
-        return;
-    }
-    if (!loadWAV(name)){
-        printf("playwave: failed to load %s\n", name);
-        return;
-    }
-    playWAV_sb16();
-}
 
-void sb16_demo(void){
-    sb16_init();
-    if (!sb16_is_present()){
-        printf("sb16_demo: SB16 not detected\n");
-        return;
-    }
-    if (!loadWAV("kasse.wav")){
-        printf("sb16_demo: missing kasse.wav in DB\n");
-        return;
-    }
-    playWAV_sb16();
-}
+
+
+
 
 // Print current wall clock time (RTC + micros)
 void now(void){ char buf[32]; time_now_iso(buf, sizeof(buf)); printf("%s\n", buf); }

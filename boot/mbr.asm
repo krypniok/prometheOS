@@ -32,7 +32,7 @@ load_kernel:
     call print16_nl
 
     ; Read from disk and store in 0x10000
-    mov ax, 0x1000
+    mov ax, KERNEL_OFFSET
     mov es, ax
     mov bx, 0x0
 

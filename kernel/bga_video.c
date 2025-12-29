@@ -37,7 +37,7 @@ static uint32_t find_bga_lfb(){
 }
 
 int bga_init(int w, int h){
-    if (w<=0||h<=0) { w=800; h=600; }
+    if (w<=0||h<=0) { w=800; h=600; } 
     // Capture current text-mode font while we are still in VGA text
     g_saved_font_h = vga_get_font_height(); if (g_saved_font_h==0||g_saved_font_h>32) g_saved_font_h=16;
     g_saved_cursor = get_cursor();
@@ -105,6 +105,12 @@ static void _vga_init_dac_default16(void){
     };
     port_byte_out(0x3C8, 0);
     for (int i=0;i<16*3;i++) port_byte_out(0x3C9, pal16[i]);
+}
+
+// Public helper to force VGA 80x25 text mode restore (safe even if BGA inactive)
+int txtmode(void) {
+    bga_close();
+    return 0;
 }
 
 // Minimal diagnostic: set text mode regs and write a VRAM marker, no console helpers
@@ -200,7 +206,7 @@ void bga_drawline(int x0,int y0,int x1,int y1,uint32_t c){
 }
 
 static void tri_edge(int x0,int y0,int x1,int y1,int* minx,int* maxx,int y){
-    if (y0==y1) return; if (y0>y1){ int tx=x0,ty=y0; x0=x1; y0=y1; x1=tx; y1=ty; }
+    if (y0==y1) return; if (y0>y1){ int tx=x0,ty=y0; x0=x1; y0=y1; x1=tx; y1=ty; } 
     if (y<y0 || y>y1) return; int dy=y1-y0; int dx=x1-x0; int num=y - y0;
     // fixed-point to avoid 64-bit division
     int x = x0 + (dx * num) / (dy?dy:1);

@@ -33,8 +33,8 @@ void perf_init2(void) {
 
     g_cpu_hz = (end - start) * 20; // auf 1s hochrechnen
 
-    char buf[64];
-    sprintf(buf,"[perf] CPU freq ≈ %i Hz\n", g_cpu_hz);
+    char buf[128];
+    sprintf(buf,"[perf] CPU freq (init2) approx 0x%X%08X Hz\n", (uint32_t)(g_cpu_hz >> 32), (uint32_t)g_cpu_hz);
     debug_puts(buf);
 }
 
@@ -68,6 +68,7 @@ static int try_cpuid_tsc_freq(uint64_t *hz_out){
 static uint64_t calibrate_tsc_via_pit(uint32_t ms)
 {
     if (ms < 10) ms = 10; // ensure measurable
+    debug_puts("[perf] Calibrating TSC against PIT...\n");
     // align to next tick
     uint32_t t = GetTicks();
     while (GetTicks() == t) { /* wait next 1ms tick */ }
@@ -76,10 +77,23 @@ static uint64_t calibrate_tsc_via_pit(uint32_t ms)
     while ((GetTicks() - t0) < ms) { /* spin */ }
     uint64_t end = perf_rdtsc();
     uint64_t delta = end - start;
+
+    char buf[128];
+    sprintf(buf, "[perf] TSC start: 0x%X%08X\n", (uint32_t)(start >> 32), (uint32_t)start);
+    debug_puts(buf);
+    sprintf(buf, "[perf] TSC end: 0x%X%08X\n", (uint32_t)(end >> 32), (uint32_t)end);
+    debug_puts(buf);
+    sprintf(buf, "[perf] TSC delta: 0x%X%08X\n", (uint32_t)(delta >> 32), (uint32_t)delta);
+    debug_puts(buf);
+
     // scale to per-second
     // hz = delta * (1000/ms)
     uint64_t scale = 1000ULL;
     uint64_t hz = (delta * scale) / (uint64_t)ms;
+
+    sprintf(buf, "[perf] Calculated CPU hz: 0x%X%08X\n", (uint32_t)(hz >> 32), (uint32_t)hz);
+    debug_puts(buf);
+
     return hz;
 }
 
@@ -87,6 +101,10 @@ void perf_init(void) {
     // In QEMU the CPUID base frequency (leaf 0x16) often reports ~1/10th
     // of the real TSC. Prefer PIT-based calibration for 1000 ms.
     g_cpu_hz = calibrate_tsc_via_pit(1000);
+
+    char buf[128];
+    sprintf(buf, "[perf] Calibrated CPU hz: 0x%X%08X\n", (uint32_t)(g_cpu_hz >> 32), (uint32_t)g_cpu_hz);
+    debug_puts(buf);
 
     // Avoid 64-bit printf on our tiny printf; print MHz as 32-bit
     uint32_t mhz = (uint32_t)(g_cpu_hz / 1000000ULL);

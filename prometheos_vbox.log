@@ -1,0 +1,241 @@
+start_kernel @ 0x0x11978A
+start_kernel via port 0xe9
+PrometheOS 0.7962 (Mo 29. Dez 10:10:49 CET 2025)
+[perf] CPU freq (init2) approx 0x0CC304D24 Hz
+read_from_disk_fast
+ lba=0x00004082 sectors=0x00000001
+read_from_disk_fast
+ lba=0x00004082 sectors=0x00000080
+read_from_disk_fast
+ lba=0x00004102 sectors=0x00000080
+read_from_disk_fast
+ lba=0x00004182 sectors=0x00000080
+read_from_disk_fast
+ lba=0x00004202 sectors=0x00000080
+read_from_disk_fast
+ lba=0x00004282 sectors=0x00000080
+read_from_disk_fast
+ lba=0x00004302 sectors=0x00000080
+read_from_disk_fast
+ lba=0x00004382 sectors=0x00000080
+read_from_disk_fast
+ lba=0x00004402 sectors=0x00000080
+read_from_disk_fast
+ lba=0x00004482 sectors=0x00000080
+read_from_disk_fast
+ lba=0x00004502 sectors=0x00000080
+read_from_disk_fast
+ lba=0x00004582 sectors=0x00000080
+read_from_disk_fast
+ lba=0x00004602 sectors=0x00000080
+read_from_disk_fast
+ lba=0x00004682 sectors=0x00000080
+read_from_disk_fast
+ lba=0x00004702 sectors=0x00000080
+read_from_disk_fast
+ lba=0x00004782 sectors=0x00000080
+read_from_disk_fast
+ lba=0x00004802 sectors=0x00000080
+read_from_disk_fast
+ lba=0x00004882 sectors=0x00000080
+read_from_disk_fast
+ lba=0x00004902 sectors=0x00000080
+read_from_disk_fast
+ lba=0x00004982 sectors=0x00000080
+read_from_disk_fast
+ lba=0x00004A02 sectors=0x00000080
+read_from_disk_fast
+ lba=0x00004A82 sectors=0x00000080
+read_from_disk_fast
+ lba=0x00004B02 sectors=0x00000080
+read_from_disk_fast
+ lba=0x00004B82 sectors=0x00000080
+read_from_disk_fast
+ lba=0x00004C02 sectors=0x00000080
+read_from_disk_fast
+ lba=0x00004C82 sectors=0x00000080
+read_from_disk_fast
+ lba=0x00004D02 sectors=0x00000080
+read_from_disk_fast
+ lba=0x00004D82 sectors=0x00000080
+read_from_disk_fast
+ lba=0x00004E02 sectors=0x00000080
+read_from_disk_fast
+ lba=0x00004E82 sectors=0x00000080
+read_from_disk_fast
+ lba=0x00004F02 sectors=0x00000080
+read_from_disk_fast
+ lba=0x00004F82 sectors=0x00000080
+read_from_disk_fast
+ lba=0x00005002 sectors=0x00000080
+read_from_disk_fast
+ lba=0x00005082 sectors=0x00000080
+read_from_disk_fast
+ lba=0x00005102 sectors=0x00000080
+read_from_disk_fast
+ lba=0x00005182 sectors=0x00000080
+read_from_disk_fast
+ lba=0x00005202 sectors=0x00000080
+read_from_disk_fast
+ lba=0x00005282 sectors=0x00000080
+read_from_disk_fast
+ lba=0x00005302 sectors=0x00000080
+read_from_disk_fast
+ lba=0x00005382 sectors=0x00000080
+read_from_disk_fast
+ lba=0x00005402 sectors=0x00000080
+read_from_disk_fast
+ lba=0x00005482 sectors=0x00000080
+read_from_disk_fast
+ lba=0x00005502 sectors=0x00000080
+read_from_disk_fast
+ lba=0x00005582 sectors=0x00000080
+read_from_disk_fast
+ lba=0x00005602 sectors=0x00000080
+read_from_disk_fast
+ lba=0x00005682 sectors=0x00000080
+read_from_disk_fast
+ lba=0x00005702 sectors=0x00000080
+read_from_disk_fast
+ lba=0x00005782 sectors=0x00000080
+read_from_disk_fast
+ lba=0x00005802 sectors=0x00000080
+read_from_disk_fast
+ lba=0x00005882 sectors=0x00000080
+read_from_disk_fast
+ lba=0x00005902 sectors=0x00000080
+read_from_disk_fast
+ lba=0x00005982 sectors=0x00000080
+read_from_disk_fast
+ lba=0x00005A02 sectors=0x00000080
+read_from_disk_fast
+ lba=0x00005A82 sectors=0x00000080
+read_from_disk_fast
+ lba=0x00005B02 sectors=0x00000080
+read_from_disk_fast
+ lba=0x00005B82 sectors=0x00000080
+read_from_disk_fast
+ lba=0x00005C02 sectors=0x00000080
+read_from_disk_fast
+ lba=0x00005C82 sectors=0x00000080
+read_from_disk_fast
+ lba=0x00005D02 sectors=0x00000080
+read_from_disk_fast
+ lba=0x00005D82 sectors=0x00000080
+read_from_disk_fast
+ lba=0x00005E02 sectors=0x00000080
+read_from_disk_fast
+ lba=0x00005E82 sectors=0x00000080
+read_from_disk_fast
+ lba=0x00005F02 sectors=0x00000080
+read_from_disk_fast
+ lba=0x00005F82 sectors=0x00000080
+read_from_disk_fast
+ lba=0x00006002 sectors=0x00000080
+read_from_disk_fast
+ lba=0x00006082 sectors=0x00000080
+read_from_disk_fast
+ lba=0x00006102 sectors=0x00000080
+read_from_disk_fast
+ lba=0x00006182 sectors=0x00000080
+read_from_disk_fast
+ lba=0x00006202 sectors=0x00000080
+read_from_disk_fast
+ lba=0x00006282 sectors=0x00000080
+read_from_disk_fast
+ lba=0x00006302 sectors=0x00000080
+read_from_disk_fast
+ lba=0x00006382 sectors=0x00000080
+read_from_disk_fast
+ lba=0x00006402 sectors=0x00000080
+read_from_disk_fast
+ lba=0x00006482 sectors=0x00000080
+read_from_disk_fast
+ lba=0x00006502 sectors=0x00000080
+read_from_disk_fast
+ lba=0x00006582 sectors=0x00000080
+read_from_disk_fast
+ lba=0x00006602 sectors=0x00000080
+read_from_disk_fast
+ lba=0x00006682 sectors=0x00000080
+read_from_disk_fast
+ lba=0x00006702 sectors=0x00000080
+read_from_disk_fast
+ lba=0x00006782 sectors=0x00000080
+read_from_disk_fast
+ lba=0x00006802 sectors=0x00000080
+read_from_disk_fast
+ lba=0x00006882 sectors=0x00000080
+read_from_disk_fast
+ lba=0x00006902 sectors=0x00000080
+read_from_disk_fast
+ lba=0x00006982 sectors=0x00000080
+read_from_disk_fast
+ lba=0x00006A02 sectors=0x00000080
+read_from_disk_fast
+ lba=0x00006A82 sectors=0x00000080
+read_from_disk_fast
+ lba=0x00006B02 sectors=0x00000080
+read_from_disk_fast
+ lba=0x00006B82 sectors=0x00000080
+read_from_disk_fast
+ lba=0x00006C02 sectors=0x00000080
+read_from_disk_fast
+ lba=0x00006C82 sectors=0x00000080
+read_from_disk_fast
+ lba=0x00006D02 sectors=0x00000080
+read_from_disk_fast
+ lba=0x00006D82 sectors=0x00000080
+read_from_disk_fast
+ lba=0x00006E02 sectors=0x00000080
+read_from_disk_fast
+ lba=0x00006E82 sectors=0x00000080
+read_from_disk_fast
+ lba=0x00006F02 sectors=0x00000080
+read_from_disk_fast
+ lba=0x00006F82 sectors=0x0000000F
+[kernel] Initializing threads...
+[kernel] Creating console thread...
+console thread id 1
+ help cpuinfo msgbox pl pv memtest cls/clear/clr/rst/reset killtimer bell snaketext ramdisk_test db_ls db_cat db_loadimg db_saveimg db_autosave_on db_autosave_off db_info db_put db_get db_rm db_edit vt restart dobby em demo txtmode thread_test tsrtime thread_kill taskmgr heartpulse sched_info sched_timeslice sched_mode perftest font dtmf dtmf_bg dtmf_stop setpal snake_main random uptime hidecursor showcursor print_registers keycodes exit loaddisk printascii cat hexviewer run hexdump memset memcpy searchb beep beepus beep_bg beep_stop beep_sequence wav_load wav_play wav_stop playwave sb16_demo pcspk pcspk_sweep pcspk_gliss printf searchs palflash glyphpulse 
+ Unknown command: lsdb
+ beep.c                       58
+bga_gradient.c              470
+bgatest.c                  1579
+dobby_thread.c              955
+explosion2.bmp           1048714
+kasse.wav                  7551
+logo.bmp                 4194442
+test.c                      529
+wolf.wav                 913132
+ Unknown command: way_play wolf.wav
+  Vendor: GenuineIntel
+Brand:         Intel(R) Core(TM) i7-3770 CPU @ 3.40GHz
+Stepping 9, Model 10, Family 6
+Features: TSC MMX SSE SSE2 SSE3 SSSE3 SSE4.1 SSE4.2 
+ Unknown command: demo
+ Unknown command: vgademo
+ help cpuinfo msgbox pl pv memtest cls/clear/clr/rst/reset killtimer bell snaketext ramdisk_test db_ls db_cat db_loadimg db_saveimg db_autosave_on db_autosave_off db_info db_put db_get db_rm db_edit vt restart dobby em demo txtmode thread_test tsrtime thread_kill taskmgr heartpulse sched_info sched_timeslice sched_mode perftest font dtmf dtmf_bg dtmf_stop setpal snake_main random uptime hidecursor showcursor print_registers keycodes exit loaddisk printascii cat hexviewer run hexdump memset memcpy searchb beep beepus beep_bg beep_stop beep_sequence wav_load wav_play wav_stop playwave sb16_demo pcspk pcspk_sweep pcspk_gliss printf searchs palflash glyphpulse 
+ Unknown command: demo
+ ÉÍÍÍÍÑÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ»
+º    ³                º
+ÇÄÄÄÄÅÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ¶
+º ³                              	                    º
+º ³                                                º
+º ³      !   "   #   $   %   &   '   (   )   *   +   ,   -   .   / º
+º ³  0   1   2   3   4   5   6   7   8   9   :   ;   <   =   >   ? º
+º ³  @   A   B   C   D   E   F   G   H   I   J   K   L   M   N   O º
+º ³  P   Q   R   S   T   U   V   W   X   Y   Z   [   \   ]   ^   _ º
+º ³  `   a   b   c   d   e   f   g   h   i   j   k   l   m   n   o º
+º ³  p   q   r   s   t   u   v   w   x   y   z   {   |   }   ~    º
+º ³  €      ‚   ƒ   „   …   †   ‡   ˆ   ‰   Š   ‹   Œ          º
+º ³     ‘   ’   “   ”   •   –   —   ˜   ™   š   ›   œ         Ÿ º
+º ³      ¡   ¢   £   ¤   ¥   ¦   §   ¨   ©   ª   «   ¬   ­   ®   ¯ º
+º ³  °   ±   ²   ³   ´   µ   ¶   ·   ¸   ¹   º   »   ¼   ½   ¾   ¿ º
+º ³  À   Á   Â   Ã   Ä   Å   Æ   Ç   È   É   Ê   Ë   Ì   Í   Î   Ï º
+º ³  Ğ   Ñ   Ò   Ó   Ô   Õ   Ö   ×   Ø   Ù   Ú   Û   Ü   İ   Ş   ß º
+º ³  à   á   â   ã   ä   å   æ   ç   è   é   ê   ë   ì   í   î   ï º
+º ³  ğ   ñ   ò   ó   ô   õ   ö   ÷   ø   ù   ú   û   ü   ı   ş   ÿ º
+ÈÍÍÍÍÏÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍÍ¼
+ Unknown command: demo
+ 

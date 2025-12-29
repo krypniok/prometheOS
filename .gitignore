@@ -1,0 +1,14 @@
+# Build artifacts
+*.bin
+*.o
+*.dis
+*.elf
+*.vdi
+disk_image.img
+database.hbdb
+hbdbtool
+prometheos.img
+prometheOS.vdi
+
+# VSCode
+.vscode/

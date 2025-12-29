@@ -224,7 +224,6 @@ extern void db_autosave_on(void); extern void db_autosave_off(void); extern void
 extern void db_put(uint32_t,uint32_t,const char*); extern void db_get(uint32_t,uint32_t,const char*);
 extern void db_rm(const char*); extern void db_edit(const char*); extern void vt_cmd(uint32_t); extern void font(const char*);
 extern void restart(void); extern void dobby_cmd(const char*); extern int editor_main(void);
-extern void bgademo(void);
 extern void bga_close(void);
 // raw VGA restore without font/console helpers for diagnostics
 extern void vga_diag_txtforce(void);
@@ -244,11 +243,6 @@ extern void pcspk_sweep3(uint32_t,uint32_t,uint32_t);
 extern void pcspk_gliss(uint32_t,uint32_t,uint32_t);
 extern void searchs(uint32_t,uint32_t,const char*); extern void quit_qemu(void);
 extern void palflash(uint32_t); extern void glyphpulse(uint32_t);
-extern void net_info(void);
-extern void netcat_cmd(const char*);
-extern void net_ping_cmd(const char*);
-extern void pingtest_cmd(void);
-extern void net_dump_regs(void);
 extern void taskmgr(void);
 extern void thread_test(void);
 extern void sched_info(void);
@@ -301,7 +295,6 @@ static const Cmd CMDS[] = {
     {"restart",     T0,        restart},
     {"dobby",       T_STR,     dobby_cmd},
     {"em",          T0,        editor_main},
-    {"demo",        T0,        bgademo},
     {"txtmode",     T0,        txtmode},
     {"txtforce",    T0,        vga_diag_txtforce},
     {"thread_test", T0,        thread_test},
@@ -356,13 +349,7 @@ static const Cmd CMDS[] = {
     {"quit_qemu",   T0,        quit_qemu},
     {"palflash",    T_U32,     palflash},
     {"glyphpulse",  T_U32,     glyphpulse},
-    {"netinfo",     T0,        net_info},
-    {"taskmgr",     T0,        taskmgr},
-    {"ping",       T_STR,     net_ping_cmd},
-    {"pingtest",    T0,        pingtest_cmd},
-    {"netdump",     T0,        net_dump_regs},
-    {"netcat",      T_STR,     netcat_cmd},
-    {"nc",          T_STR,     netcat_cmd}
+    {"taskmgr",     T0,        taskmgr}
 };
 
 
@@ -412,15 +399,18 @@ void kernel_main() {
         print_string("Initializing FPU.\n");;
         fpu_init();
 
+        void perf_init2(void);
         print_string("Initializing Perfomance Counter.\n");;
-		perf_init();
+		perf_init2();
         print_string("Seeding wall clock from RTC.\n");
         time_init_with_rtc();
 
+        /*
         print_string("Initializing RTL8139 network adapter.\n");
         if (net_init() != 0) {
             print_string("RTL8139 init failed.\n");
         }
+        */
 
         print_string("Probing Sound Blaster 16 (0x220).\n");
         sb16_init();
@@ -445,11 +435,14 @@ void kernel_main() {
     // Any such tests should use a dedicated scratch buffer and stay clear of
     // the BSS region.
     // Start console as its own cooperative thread; main runs the scheduler
+    debug_puts("[kernel] Initializing threads...\n");
     thread_init();
+    debug_puts("[kernel] Creating console thread...\n");
     int console_tid = thread_create(kernel_console_thread);
     printf("console thread id %d\n", console_tid);
     if (console_tid < 0) {
         printf("console thread create failed; fallback to blocking console\n");
+        debug_puts("[kernel] Thread creation FAILED. Using blocking console.\n");
         while(!g_bKernelShouldStop) {
             kernel_process_pending_vt();
             kernel_console_program();
@@ -458,8 +451,6 @@ void kernel_main() {
         while(!g_bKernelShouldStop) {
             kernel_process_pending_vt();
             // simple cooperative scheduler heartbeat
-            net_poll();
-            net_tick();
             thread_yield();
             // micro idle to reduce CPU but keep >1 kHz responsiveness
             sleep_us(50);
